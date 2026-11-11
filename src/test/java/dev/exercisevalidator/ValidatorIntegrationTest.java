@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -22,6 +23,8 @@ import dev.exercisevalidator.check.Verdict;
 import dev.exercisevalidator.check.Verdict.Status;
 import dev.exercisevalidator.run.Exercise;
 import dev.exercisevalidator.run.GradleRunner;
+import dev.exercisevalidator.run.Mutant;
+import dev.exercisevalidator.run.MutationResult;
 import dev.exercisevalidator.run.RunResult;
 import dev.exercisevalidator.run.VariantRunner;
 
@@ -39,10 +42,10 @@ class ValidatorIntegrationTest {
     }
 
     @Test
-    void plainSampleHasExactlyOneFindingTheOverSpecifiedTest() throws Exception {
+    void plainSampleHasOneFindingAndTheMutationCheckShowsTheWeakNullTest() throws Exception {
         Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(10), false, null), step -> { });
 
-        Report report = validator.validate(Exercise.open(PLAIN_SAMPLE), 2, 1);
+        Report report = validator.validate(Exercise.open(PLAIN_SAMPLE), 2, 1, true);
 
         assertNull(report.fatal(), report.fatal());
         assertEquals("17", report.javaVersion());
@@ -54,6 +57,21 @@ class ValidatorIntegrationTest {
         Verdict finding = report.verdicts().stream().filter(v -> v.status() == Status.OVER_SPECIFIED).findFirst().orElseThrow();
         assertTrue(finding.evidence().get(0).endsWith("on alternatives/b-other-message"), finding.evidence().toString());
         assertEquals(1, report.exitCode());
+
+        // Same numbers as the step 1b spike: 11 mutants, 9 killed, 2 survive.
+        MutationResult mutation = report.mutation();
+        assertEquals(MutationResult.State.RAN, mutation.state(), mutation.note());
+        assertEquals(11, mutation.mutants().size());
+        assertEquals(9, mutation.detected());
+        List<Mutant> survivors = mutation.undetected();
+        assertEquals(2, survivors.size());
+        // "null check removed" survives because nullArrayIsRejected accepts any RuntimeException.
+        assertEquals(9, survivors.get(0).line());
+        assertEquals("if (values == null || values.length == 0) {", survivors.get(0).sourceLine());
+        assertTrue(survivors.get(0).description().startsWith("removed conditional"), survivors.get(0).description());
+        // values[i] > max to >= returns the same maximum: an equivalent mutant no test can kill.
+        assertEquals(14, survivors.get(1).line());
+        assertEquals("changed conditional boundary", survivors.get(1).description());
     }
 
     @Test
@@ -62,7 +80,7 @@ class ValidatorIntegrationTest {
         Files.walk(fixture.root().resolve("alternatives")).sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
         Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(10), false, null), step -> { });
 
-        Report report = validator.validate(fixture, 10, 1);
+        Report report = validator.validate(fixture, 10, 1, false);
 
         assertNull(report.fatal(), report.fatal());
         Map<String, Status> statuses = statuses(report);

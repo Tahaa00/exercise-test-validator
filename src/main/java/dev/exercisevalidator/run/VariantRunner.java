@@ -17,6 +17,12 @@ public interface VariantRunner {
         /** Re-runs only the tests, in random method and class order with the given seed. Needs a previous {@link #run()}. */
         RunResult rerunShuffled(long seed) throws IOException, InterruptedException;
 
+        /**
+         * Runs PIT on this variant with the suite as the judge. Needs a previous {@link #run()} in which every
+         * test passed: PIT refuses to start when the suite fails without any mutation.
+         */
+        MutationResult mutate() throws IOException, InterruptedException;
+
         @Override
         void close() throws IOException;
     }
