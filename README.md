@@ -1,6 +1,6 @@
 # exercise-test-validator
 
-> Work in progress. Build step 2 of 5: solution, flakiness and alternatives checks work. Mutation testing (PIT) is next.
+> Work in progress. Build step 3 of 5: solution, flakiness, alternatives and mutation checks work.
 
 Checks whether the unit tests of a Java programming exercise are correct **before** they grade students.
 It runs the tests instead of judging them:
@@ -66,7 +66,20 @@ array-max  (Java 17, 7 tests, 3 alternatives, 10 random-order runs, base seed 10
   OK               nullArrayIsRejected()
   OK               arrayIsNotModified()
 
-Solution: 7/7 pass   Flaky: 0   Fail on an alternative: 1
+Mutation check (PIT on the solution, STRONGER mutators)
+
+  11 mutants: 9 detected, 2 survived, 0 not covered
+
+  SURVIVED     ArrayMax.java:9   max()  removed conditional - replaced equality check with true
+                 if (values == null || values.length == 0) {
+  SURVIVED     ArrayMax.java:14  max()  changed conditional boundary
+                 if (values[i] > max) {
+
+  These are hints, not errors. SURVIVED: tests ran the changed line and still passed, so a test
+  may be missing or too weak, or the mutant is equivalent (same behaviour as the original).
+  NOT COVERED: no test runs that line.
+
+Solution: 7/7 pass   Flaky: 0   Fail on an alternative: 1   Mutants not detected: 2
 Result: 1 finding
 ```
 
@@ -84,7 +97,21 @@ run the exercise's own `./gradlew clean test`, read the JUnit XML. The exercise'
 Timeouts are shown as `TIMEOUT`, not as `FAIL`. A build that produces no test results at all (compile error,
 failed dependency download) is reported as a build problem, not as failing tests.
 
+### Mutation check
+
+After the solution runs, [PIT](https://pitest.org) plants small bugs (mutants) in the solution and reruns the tests
+for each. A mutant no test notices is listed with its line. In the sample above:
+
+- Line 9, null check removed: `nullArrayIsRejected()` accepts any `RuntimeException`, so the
+  `NullPointerException` that follows still passes. This is the weak test.
+- Line 14, `>` changed to `>=`: the method still returns the same maximum. No test can catch this
+  (an equivalent mutant), which is why survivors are hints and neither count as findings nor change the exit code.
+
+PIT is added through a Gradle init script and runs with the test task's JVM arguments (Ares agent included),
+so the exercise's build files stay untouched. It only runs when every test passes on the solution.
+
 Options: `--runs <n>` (random-order runs, default 10), `--seed <n>` (replay the same runs),
+`--no-mutation` (skip the mutation check),
 `--timeout-minutes <n>` (limit per Gradle run, default 10), `--java-home <path>` (JDK to start the exercise's Gradle with),
 `--keep-work` (keep work folders and Gradle logs).
 Exit code: 0 no findings, 1 findings, 2 the solution could not be run.
