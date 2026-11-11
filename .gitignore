@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+bin/
+out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Validator scratch output
+.validator-work/
+
+# Real course material must never be committed. Keep it outside this repo,
+# or in this ignored folder if you want it next to the samples.
+local-exercises/
