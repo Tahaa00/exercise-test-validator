@@ -1,0 +1,7 @@
+// Rendered from the Artemis Java/Gradle test template, without the Artemis Maven Central mirror.
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+    }
+}
+rootProject.name = 'Array-Max-Tests'

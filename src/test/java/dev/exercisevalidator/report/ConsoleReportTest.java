@@ -52,10 +52,10 @@ class ConsoleReportTest {
     @Test
     void mutationSectionListsUndetectedMutantsWithTheirSourceLine() {
         Report report = withMutation(MutationResult.ran(List.of(
-                new Mutant("ArrayMax.java", "p.ArrayMax", "max", 9, "removed conditional", "SURVIVED", false, "if (values == null) {"),
-                new Mutant("ArrayMax.java", "p.ArrayMax", "max", 12, "negated conditional", "KILLED", true, "x"),
-                new Mutant("ArrayMax.java", "p.ArrayMax", "max", 13, "changed conditional boundary", "RUN_ERROR", true, "x"),
-                new Mutant("ArrayMax.java", "p.ArrayMax", "unused", 30, "replaced int return with 0", "NO_COVERAGE", false, ""))));
+                new Mutant("ArrayMax.java", "p.ArrayMax", "max", "([I)I", 9, "removed conditional", "SURVIVED", false, "if (values == null) {"),
+                new Mutant("ArrayMax.java", "p.ArrayMax", "max", "([I)I", 12, "negated conditional", "KILLED", true, "x"),
+                new Mutant("ArrayMax.java", "p.ArrayMax", "max", "([I)I", 13, "changed conditional boundary", "RUN_ERROR", true, "x"),
+                new Mutant("ArrayMax.java", "p.ArrayMax", "unused", "()I", 30, "replaced int return with 0", "NO_COVERAGE", false, ""))));
 
         assertEquals("""
                 array-max  (Java 17, 1 tests, 0 alternatives, 0 random-order runs, base seed 7)
@@ -77,6 +77,49 @@ class ConsoleReportTest {
                 Solution: 1/1 pass   Flaky: 0   Fail on an alternative: 0   Mutants not detected: 2
                 Result: no findings
                 """, ConsoleReport.render(report));
+    }
+
+    /** Seen on a real exercise: 24 of 26 hints came from a demo main and one untested method, burying the two real ones. */
+    @Test
+    void untestedMethodIsOneLineAndAnUntestedMainIsLeftOut() {
+        String mainDescriptor = "([Ljava/lang/String;)V";
+        Report report = withMutation(MutationResult.ran(List.of(
+                new Mutant("Search.java", "p.Search", "linear", "([I)I", 5, "negated conditional", "KILLED", true, "x"),
+                new Mutant("Search.java", "p.Search", "linear", "([I)I", 6, "changed conditional boundary", "SURVIVED", false, "if (a > b) {"),
+                new Mutant("Search.java", "p.Search", "binary", "([I)I", 20, "negated conditional", "NO_COVERAGE", false, "x"),
+                new Mutant("Search.java", "p.Search", "binary", "([I)I", 24, "replaced int return with 0", "NO_COVERAGE", false, "x"),
+                new Mutant("Search.java", "p.Search", "binary", "([I)I", 22, "changed conditional boundary", "NO_COVERAGE", false, "x"),
+                new Mutant("Main.java", "p.Main", "main", mainDescriptor, 8, "removed call to println", "NO_COVERAGE", false, "x"),
+                new Mutant("Main.java", "p.Main", "main", mainDescriptor, 9, "removed call to println", "NO_COVERAGE", false, "x")),
+                "Ares was told to trust PIT."));
+
+        String text = ConsoleReport.render(report);
+
+        assertTrue(text.contains("""
+                  5 mutants: 1 detected, 1 survived, 3 not covered
+
+                  SURVIVED     Search.java:6      linear()  changed conditional boundary
+                                 if (a > b) {
+                  NOT COVERED  Search.java:20-24  binary()  3 mutants, no test runs any of these lines
+
+                """), text);
+        assertTrue(text.contains("  Left out: 2 mutants in Main.main(String[]). No test runs it, as usual for a demo entry point.\n"), text);
+        assertTrue(text.contains("  Note: Ares was told to trust PIT.\n"), text);
+        assertTrue(text.contains("Mutants not detected: 4\n"), text);
+    }
+
+    @Test
+    void mainThatTestsRunIsReportedLikeAnyOtherMethod() {
+        String mainDescriptor = "([Ljava/lang/String;)V";
+        MutationResult mutation = MutationResult.ran(List.of(
+                new Mutant("Main.java", "p.Main", "main", mainDescriptor, 8, "removed call to println", "SURVIVED", false, "x"),
+                new Mutant("Main.java", "p.Main", "main", mainDescriptor, 9, "removed call to println", "NO_COVERAGE", false, "x"),
+                // Not an entry point: other parameters.
+                new Mutant("Tool.java", "p.Tool", "main", "(I)V", 3, "removed call to println", "NO_COVERAGE", false, "x")));
+
+        assertTrue(mutation.leftOut().isEmpty());
+        assertEquals(3, mutation.undetected().size());
+        assertTrue(!ConsoleReport.render(withMutation(mutation)).contains("Left out"));
     }
 
     @Test

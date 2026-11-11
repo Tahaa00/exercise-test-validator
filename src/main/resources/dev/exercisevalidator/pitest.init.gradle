@@ -9,16 +9,18 @@ initscript {
     }
 }
 
-// 'pkg/Foo.java' becomes 'pkg.Foo*', which also covers nested classes.
-def classGlobs = { sourceSet ->
-    def globs = [] as Set
+// 'pkg/Foo.java' becomes 'pkg.Foo'.
+def classNames = { sourceSet ->
+    def names = [] as Set
     sourceSet.java.asFileTree.visit { details ->
         if (!details.directory && details.name.endsWith('.java')) {
-            globs << details.relativePath.pathString.replaceAll(/\.java$/, '').replace('/', '.') + '*'
+            names << details.relativePath.pathString.replaceAll(/\.java$/, '').replace('/', '.')
         }
     }
-    globs
+    names
 }
+// 'pkg.Foo*' also covers nested classes.
+def classGlobs = { sourceSet -> classNames(sourceSet).collect { it + '*' } as Set }
 
 allprojects {
     // Init scripts cannot use plugin ids, so the plugin is applied by class.
@@ -43,6 +45,29 @@ allprojects {
             timestampedReports = false
             threads = 1
             verbose = providers.gradleProperty('pitVerbose').isPresent()
+        }
+
+        // Ares 1 (artemis-java-test-sandbox) guards the tests with a security manager. It forbids code outside its
+        // trusted list to load 'sun.*' classes, and PIT's coverage probes, which PIT adds to the solution's classes,
+        // live in 'sun.pitest'. It also distrusts PIT's own frames on the stack once a mutant is running. Without help
+        // every test fails with a SecurityException before PIT has made a single mutant.
+        // So, for this PIT run only, Ares is told to trust the solution's classes and PIT, through its own system
+        // properties. 'ares.gradle.ignore' is needed with it: Ares otherwise rejects a trusted package that
+        // build.gradle does not protect, and build.gradle is not ours to edit.
+        // The properties travel in JAVA_TOOL_OPTIONS because PIT splits its JVM args on commas (see above), and
+        // PIT's test JVMs inherit the environment of this task. Ares 2 has no security manager and needs none of this.
+        tasks.withType(info.solidsoft.gradle.pitest.PitestTask).configureEach {
+            doFirst {
+                def ares1 = configurations.testRuntimeClasspath.resolvedConfiguration.resolvedArtifacts
+                        .any { it.moduleVersion.id.name == 'artemis-java-test-sandbox' }
+                if (ares1) {
+                    def trusted = (['org.pitest'] + classNames(sourceSets.main)).join(',')
+                    def inherited = System.getenv('JAVA_TOOL_OPTIONS')
+                    environment 'JAVA_TOOL_OPTIONS', (inherited ? inherited + ' ' : '') +
+                            "-Dares.gradle.ignore=true -Dares.security.trustedpackages=${trusted}"
+                    println 'VALIDATOR_PIT_ARES1_TRUSTED=true'
+                }
+            }
         }
     }
 }

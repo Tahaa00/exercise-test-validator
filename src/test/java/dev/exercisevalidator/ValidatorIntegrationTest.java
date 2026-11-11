@@ -29,7 +29,8 @@ import dev.exercisevalidator.run.RunResult;
 import dev.exercisevalidator.run.VariantRunner;
 
 /**
- * End to end: real Gradle runs of the plain sample and of a flaky fixture. Run with {@code ./gradlew integrationTest}.
+ * End to end: real Gradle runs of the plain sample, a flaky fixture and an Ares 1 fixture.
+ * Run with {@code ./gradlew integrationTest}.
  * The Ares samples are not run here because they need JDK 25; they are checked by hand until CI exists (step 4).
  */
 @Tag("integration")
@@ -87,6 +88,38 @@ class ValidatorIntegrationTest {
         // Which of the two tests breaks depends on the order; with base seed 1 at least one run flips it.
         assertTrue(statuses.containsValue(Status.FLAKY), statuses.toString());
         assertEquals(0, report.count(Status.REJECTED), "both tests pass in the declared order");
+    }
+
+    /**
+     * Ares 1 runs the tests under a security manager that blocks PIT's coverage probes ("BAD PACKAGE ACCESS:
+     * sun.pitest"). Found on a real Java 17 exercise, where PIT then saw every test fail. The numbers must match
+     * the plain sample, which has the same ArrayMax and the same weak null test.
+     */
+    @Test
+    void pitRunsUnderTheAres1SecurityManagerAndTheDemoMainIsLeftOut(@TempDir Path temp) throws Exception {
+        Path root = temp.resolve("ares1-sandbox");
+        copy(Path.of("src/test/exercises/ares1-sandbox"), root);
+        // The fixture ships its own build.gradle but no wrapper; borrow the Gradle 8.12 one.
+        Path wrapperSource = Path.of("exercises/array-max/tests");
+        for (String file : List.of("gradlew", "gradlew.bat", "gradle/wrapper/gradle-wrapper.jar", "gradle/wrapper/gradle-wrapper.properties")) {
+            Files.createDirectories(root.resolve("tests").resolve(file).getParent());
+            Files.copy(wrapperSource.resolve(file), root.resolve("tests").resolve(file));
+        }
+        Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(10), false, null), step -> { });
+
+        Report report = validator.validate(Exercise.open(root), 0, 1, true);
+
+        assertNull(report.fatal(), report.fatal());
+        assertEquals(7, report.count(Status.OK));
+        MutationResult mutation = report.mutation();
+        assertEquals(MutationResult.State.RAN, mutation.state(), mutation.note());
+        assertTrue(mutation.note().contains("Ares 1"), mutation.note());
+        assertEquals(11, mutation.counted().size());
+        assertEquals(9, mutation.detected());
+        assertEquals(List.of(9, 14), mutation.undetected().stream().map(Mutant::line).toList());
+        assertTrue(mutation.undetected().stream().allMatch(Mutant::survived));
+        assertTrue(!mutation.leftOut().isEmpty() && mutation.leftOut().stream().allMatch(m -> m.className().endsWith(".Main")),
+                mutation.leftOut().toString());
     }
 
     /** A suite without test timeouts and a hanging solution: the tool's own limit must end the run. */
