@@ -1,7 +1,9 @@
 // Added by exercise-test-validator on the command line (--init-script). The exercise's build files stay untouched.
 //
 // 1. Always: print the Java version of the build's toolchain, so the report can show it without guessing.
-// 2. Only with -PvalidatorSeed=<n>: run test methods and classes in random order with that seed (flakiness check).
+// 2. Always: write one line per test start and test end to validator-test-events.tsv, as Gradle sees them.
+//    Used only when the test JVM is killed: Gradle 8 then writes no JUnit XML at all, Gradle 9 a partial one.
+// 3. Only with -PvalidatorSeed=<n>: run test methods and classes in random order with that seed (flakiness check).
 //    These are JUnit's own configuration parameters, so a class with an explicit @TestMethodOrder keeps its order.
 def seed = gradle.startParameter.projectProperties['validatorSeed']
 
@@ -13,6 +15,13 @@ gradle.projectsEvaluated {
 
 allprojects {
     tasks.withType(Test).configureEach {
+        def events = new File(project.rootDir, 'validator-test-events.tsv')
+        def clean = { text -> (text ?: '').toString().replaceAll(/\s+/, ' ') }
+        doFirst { events.text = '' }
+        beforeTest { test -> events << "START\t${test.className}\t${clean(test.displayName)}\n" }
+        afterTest { test, result ->
+            events << "END\t${test.className}\t${clean(test.displayName)}\t${result.resultType}\t${clean(result.exception)}\n"
+        }
         if (seed != null) {
             systemProperty 'junit.jupiter.testmethod.order.default', 'org.junit.jupiter.api.MethodOrderer$Random'
             systemProperty 'junit.jupiter.testclass.order.default', 'org.junit.jupiter.api.ClassOrderer$Random'

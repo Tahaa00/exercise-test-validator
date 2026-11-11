@@ -25,11 +25,10 @@ public final class JUnitXmlReader {
     }
 
     /**
-     * @param jvmKilled whether the test JVM died during this run. Needed to read {@code <skipped/>} correctly:
-     *                  Gradle marks the test that was running when the JVM died as skipped, exactly like a
-     *                  {@code @Disabled} test. Only the process exit tells the two apart.
+     * Reads the XML as it is. Careful with {@code <skipped/>}: Gradle 9 also writes it for the test that was running
+     * when the test JVM was killed. {@link KilledJvm} corrects that; this class cannot know it.
      */
-    public static List<TestResult> read(Path resultsDir, boolean jvmKilled) throws IOException {
+    public static List<TestResult> read(Path resultsDir) throws IOException {
         if (!Files.isDirectory(resultsDir)) {
             return List.of();
         }
@@ -39,12 +38,12 @@ public final class JUnitXmlReader {
         }
         List<TestResult> results = new ArrayList<>();
         for (Path file : files) {
-            results.addAll(readFile(file, jvmKilled));
+            results.addAll(readFile(file));
         }
         return results;
     }
 
-    private static List<TestResult> readFile(Path file, boolean jvmKilled) throws IOException {
+    private static List<TestResult> readFile(Path file) throws IOException {
         Element root;
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -58,12 +57,12 @@ public final class JUnitXmlReader {
         NodeList cases = root.getElementsByTagName("testcase");
         for (int i = 0; i < cases.getLength(); i++) {
             Element testCase = (Element) cases.item(i);
-            results.add(toResult(testCase, jvmKilled));
+            results.add(toResult(testCase));
         }
         return results;
     }
 
-    private static TestResult toResult(Element testCase, boolean jvmKilled) {
+    private static TestResult toResult(Element testCase) {
         String name = testCase.getAttribute("name");
         String className = testCase.getAttribute("classname");
         Element problem = firstChild(testCase, "failure");
@@ -77,9 +76,7 @@ public final class JUnitXmlReader {
             return new TestResult(name, className, outcome, oneLine(message.isBlank() ? type : message));
         }
         if (firstChild(testCase, "skipped") != null) {
-            return jvmKilled
-                    ? new TestResult(name, className, TestOutcome.TIMEOUT, "the test JVM was killed while this test was running")
-                    : new TestResult(name, className, TestOutcome.SKIPPED, "skipped (disabled or assumption not met)");
+            return new TestResult(name, className, TestOutcome.SKIPPED, "skipped (disabled or assumption not met)");
         }
         return new TestResult(name, className, TestOutcome.PASS, "");
     }

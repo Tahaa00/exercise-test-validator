@@ -40,7 +40,7 @@ class ValidatorIntegrationTest {
 
     @Test
     void plainSampleHasExactlyOneFindingTheOverSpecifiedTest() throws Exception {
-        Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(10), false), step -> { });
+        Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(10), false, null), step -> { });
 
         Report report = validator.validate(Exercise.open(PLAIN_SAMPLE), 2, 1);
 
@@ -60,7 +60,7 @@ class ValidatorIntegrationTest {
     void orderDependentTestIsReportedAsFlaky(@TempDir Path temp) throws Exception {
         Exercise fixture = flakyFixture(temp);
         Files.walk(fixture.root().resolve("alternatives")).sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
-        Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(10), false), step -> { });
+        Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(10), false, null), step -> { });
 
         Report report = validator.validate(fixture, 10, 1);
 
@@ -75,7 +75,7 @@ class ValidatorIntegrationTest {
     @Test
     void hangingRunIsStoppedByTheToolsTimeLimit(@TempDir Path temp) throws Exception {
         Exercise fixture = flakyFixture(temp);
-        VariantRunner runner = new GradleRunner(Duration.ofSeconds(45), false);
+        VariantRunner runner = new GradleRunner(Duration.ofSeconds(45), false, null);
 
         RunResult result;
         try (VariantRunner.Session session = runner.open(fixture, "alternatives/a-hangs")) {

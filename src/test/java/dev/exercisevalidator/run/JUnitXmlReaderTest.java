@@ -16,7 +16,7 @@ class JUnitXmlReaderTest {
     @TempDir
     Path dir;
 
-    private List<TestResult> read(String testcases, boolean jvmKilled) throws IOException {
+    private List<TestResult> read(String testcases) throws IOException {
         Files.writeString(dir.resolve("TEST-com.example.SomeTest.xml"), """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <testsuite name="com.example.SomeTest" tests="1" skipped="0" failures="0" errors="0">
@@ -25,7 +25,7 @@ class JUnitXmlReaderTest {
                   <system-out><![CDATA[]]></system-out>
                 </testsuite>
                 """.formatted(testcases));
-        return JUnitXmlReader.read(dir, jvmKilled);
+        return JUnitXmlReader.read(dir);
     }
 
     @Test
@@ -36,7 +36,7 @@ class JUnitXmlReaderTest {
                   <failure message="org.opentest4j.AssertionFailedError: wrong value.&#10;  expected: 1&#10;  actual: 2"
                            type="org.opentest4j.AssertionFailedError">stack trace</failure>
                 </testcase>
-                """, false);
+                """);
 
         assertEquals(new TestResult("passes()", "com.example.SomeTest", TestOutcome.PASS, ""), results.get(0));
         assertEquals(TestOutcome.FAIL, results.get(1).outcome());
@@ -50,28 +50,14 @@ class JUnitXmlReaderTest {
                   <error message="java.util.concurrent.TimeoutException: slow() timed out after 2 seconds"
                          type="java.util.concurrent.TimeoutException">stack trace</error>
                 </testcase>
-                """, false);
+                """);
 
         assertEquals(TestOutcome.TIMEOUT, results.get(0).outcome());
     }
 
-    /** The XML Gradle really writes when Ares' @StrictTimeout kills the test JVM: the running test is "skipped". */
-    @Test
-    void skippedTestInAKilledJvmIsATimeout() throws IOException {
-        String xml = """
-                <testcase name="maxOfNegativeValues()" classname="com.example.SomeTest" time="0.085"/>
-                <testcase name="maxOfSingleValue()" classname="com.example.SomeTest" time="2.411">
-                  <skipped/>
-                </testcase>
-                """;
-
-        assertEquals(TestOutcome.TIMEOUT, read(xml, true).get(1).outcome());
-        assertEquals(TestOutcome.SKIPPED, read(xml, false).get(1).outcome(), "with a living JVM, skipped means @Disabled");
-    }
-
     @Test
     void missingResultsFolderGivesNoResults() throws IOException {
-        assertTrue(JUnitXmlReader.read(dir.resolve("does-not-exist"), false).isEmpty());
+        assertTrue(JUnitXmlReader.read(dir.resolve("does-not-exist")).isEmpty());
     }
 
     @Test

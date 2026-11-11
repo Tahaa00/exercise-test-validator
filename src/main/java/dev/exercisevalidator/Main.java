@@ -22,6 +22,7 @@ public final class Main {
               --runs <n>             random-order runs for the flakiness check (default 10, 0 = off)
               --seed <n>             base seed of the random-order runs (default: random, printed in the report)
               --timeout-minutes <n>  limit for one Gradle run (default 10)
+              --java-home <path>     JDK to start the exercise's Gradle with (default: JAVA_HOME of this process)
               --keep-work            keep the temporary work folders and Gradle logs
             """;
 
@@ -34,6 +35,7 @@ public final class Main {
         long seed = ThreadLocalRandom.current().nextLong(1_000_000);
         long timeoutMinutes = 10;
         boolean keepWork = false;
+        Path javaHome = null;
         try {
             if (args.length < 2 || !"validate".equals(args[0])) {
                 throw new IllegalArgumentException("Expected: validate <exercise-folder>");
@@ -45,11 +47,17 @@ public final class Main {
                     case "--seed" -> seed = number(args, ++i, Long.MIN_VALUE);
                     case "--timeout-minutes" -> timeoutMinutes = number(args, ++i, 1);
                     case "--keep-work" -> keepWork = true;
+                    case "--java-home" -> {
+                        if (++i >= args.length || !java.nio.file.Files.isDirectory(Path.of(args[i]))) {
+                            throw new IllegalArgumentException("--java-home needs the path of a JDK folder");
+                        }
+                        javaHome = Path.of(args[i]).toAbsolutePath();
+                    }
                     default -> throw new IllegalArgumentException("Unknown option: " + args[i]);
                 }
             }
             Exercise exercise = Exercise.open(folder);
-            Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(timeoutMinutes), keepWork),
+            Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(timeoutMinutes), keepWork, javaHome),
                     step -> System.err.println("  running " + step)); // progress on stderr keeps stdout a clean report
             Report report = validator.validate(exercise, runs, seed);
             System.out.print(ConsoleReport.render(report));
