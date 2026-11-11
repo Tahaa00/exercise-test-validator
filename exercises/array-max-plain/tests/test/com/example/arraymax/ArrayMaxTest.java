@@ -1,17 +1,18 @@
 package com.example.arraymax;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static com.example.arraymax.TestUtils.expectEquals;
+import static com.example.arraymax.TestUtils.invokeStatic;
+import static com.example.arraymax.TestUtils.thrownBy;
+import static org.junit.jupiter.api.Assertions.fail;
 
-import java.lang.reflect.Method;
+import java.util.Arrays;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Sample suite with two deliberate flaws, for the validator to find:
+ * Style A sample suite: plain JUnit 5, reflection helpers, display names equal to the method names
+ * (so Artemis' task binding by test name keeps working). Deliberate flaws for the validator to find:
  * <ul>
  *   <li>{@link #emptyArrayIsRejected()} is over-specified: it demands an exact message the statement does not require.</li>
  *   <li>{@link #nullArrayIsRejected()} is weak: any RuntimeException passes, including the NullPointerException
@@ -22,64 +23,60 @@ import org.junit.jupiter.api.Test;
  */
 class ArrayMaxTest {
 
-    private Method max;
-
-    @BeforeEach
-    void findMethod() {
-        Class<?> arrayMax = TestUtils.findClass("com.example.arraymax.ArrayMax");
-        max = TestUtils.findStaticMethod(arrayMax, "max", int[].class);
-    }
-
-    private int callMax(int... values) {
-        return (int) TestUtils.invokeStatic(max, (Object) values);
+    private static int max(int... values) {
+        return (int) invokeStatic("ArrayMax", "max", (Object) values);
     }
 
     @Test
-    @DisplayName("Returns the largest of mixed values")
+    @DisplayName("maxOfMixedValues()")
     void maxOfMixedValues() {
-        assertEquals(9, callMax(3, 9, 1, 4), "max([3, 9, 1, 4]) should be 9.");
+        expectEquals(9, max(3, 9, 1, 4), "max([3, 9, 1, 4]) returned the wrong value.");
     }
 
     @Test
-    @DisplayName("Works when all values are negative")
+    @DisplayName("maxOfNegativeValues()")
     void maxOfNegativeValues() {
-        assertEquals(-2, callMax(-7, -2, -5), "max([-7, -2, -5]) should be -2.");
+        expectEquals(-2, max(-7, -2, -5), "max([-7, -2, -5]) returned the wrong value. Did you start with 0?");
     }
 
     @Test
-    @DisplayName("Works for a single value")
+    @DisplayName("maxOfSingleValue()")
     void maxOfSingleValue() {
-        assertEquals(42, callMax(42), "max([42]) should be 42.");
+        expectEquals(42, max(42), "max([42]) returned the wrong value.");
     }
 
     @Test
-    @DisplayName("Finds the maximum at the last position")
+    @DisplayName("maxAtLastPosition()")
     void maxAtLastPosition() {
-        assertEquals(8, callMax(1, 2, 8), "max([1, 2, 8]) should be 8. Does your loop reach the last element?");
+        expectEquals(8, max(1, 2, 8), "max([1, 2, 8]) returned the wrong value. Does your loop reach the last element?");
     }
 
     @Test
-    @DisplayName("Does not modify the input array")
+    @DisplayName("arrayIsNotModified()")
     void arrayIsNotModified() {
         int[] values = {5, 1, 3};
-        callMax(values);
-        assertArrayEquals(new int[] {5, 1, 3}, values, "max must not change the array it is given.");
+        max(values);
+        expectEquals("[5, 1, 3]", Arrays.toString(values), "max must not change the array it is given.");
     }
 
     // FLAW (over-specified): the statement says the message is not graded, but this test compares it exactly.
     @Test
-    @DisplayName("Rejects an empty array")
+    @DisplayName("emptyArrayIsRejected()")
     void emptyArrayIsRejected() {
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> callMax(),
-                "An empty array should cause an IllegalArgumentException.");
-        assertEquals("Array must not be empty", e.getMessage(), "Unexpected exception message.");
+        Throwable thrown = thrownBy("ArrayMax", "max", (Object) new int[0]);
+        if (!(thrown instanceof IllegalArgumentException)) {
+            fail("max([]) should throw an IllegalArgumentException, but threw " + thrown + ".");
+        }
+        expectEquals("Array must not be empty", thrown.getMessage(), "max([]) threw the wrong message.");
     }
 
     // FLAW (weak): accepts any RuntimeException, so a missing null check (NullPointerException) still passes.
     @Test
-    @DisplayName("Rejects null")
+    @DisplayName("nullArrayIsRejected()")
     void nullArrayIsRejected() {
-        assertThrows(RuntimeException.class, () -> TestUtils.invokeStatic(max, (Object) null),
-                "null should be rejected.");
+        Throwable thrown = thrownBy("ArrayMax", "max", (Object) null);
+        if (!(thrown instanceof RuntimeException)) {
+            fail("max(null) should throw an exception, but threw " + thrown + ".");
+        }
     }
 }
