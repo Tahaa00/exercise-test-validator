@@ -1,0 +1,22 @@
+// Added by exercise-test-validator on the command line (--init-script). The exercise's build files stay untouched.
+//
+// 1. Always: print the Java version of the build's toolchain, so the report can show it without guessing.
+// 2. Only with -PvalidatorSeed=<n>: run test methods and classes in random order with that seed (flakiness check).
+//    These are JUnit's own configuration parameters, so a class with an explicit @TestMethodOrder keeps its order.
+def seed = gradle.startParameter.projectProperties['validatorSeed']
+
+gradle.projectsEvaluated {
+    def java = gradle.rootProject.extensions.findByName('java')
+    def version = java?.toolchain?.languageVersion?.getOrNull()
+    println "VALIDATOR_JAVA_VERSION=${version ?: 'default'}"
+}
+
+allprojects {
+    tasks.withType(Test).configureEach {
+        if (seed != null) {
+            systemProperty 'junit.jupiter.testmethod.order.default', 'org.junit.jupiter.api.MethodOrderer$Random'
+            systemProperty 'junit.jupiter.testclass.order.default', 'org.junit.jupiter.api.ClassOrderer$Random'
+            systemProperty 'junit.jupiter.execution.order.random.seed', seed
+        }
+    }
+}
