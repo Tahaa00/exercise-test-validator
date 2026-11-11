@@ -28,7 +28,7 @@ This file overrides `project-brief-test-validator.md` wherever they differ. One 
 | D11 | Flakiness check is part of step 2: 10 runs on the solution in random method order. | Brief makes it v1; it needs the same per-variant runner as the other checks. |
 | D13 | Results are keyed by the XML test name. Style A samples use `@DisplayName("methodName()")`, and the tool will warn when a display name is not of that form. | Real course suites do this, and it keeps names identical to the method names Artemis tasks bind to. |
 | D14 | Style A sample helpers follow the real pattern: `TestUtils` with a base package, lookup by simple class name, invoke by method name with argument matching, `expectEquals` and `fail` with readable messages instead of JUnit asserts. No `@Policy` in style A, but the tests repo still ships `SecurityPolicy.yaml` like the template. | Mirrors a real course suite (patterns only, code self-written). |
-| D15 | Mutation testing uses the Gradle PIT plugin (`gradle-pitest-plugin` 1.19.0, PIT 1.30.2, pitest-junit5-plugin 1.2.3), added by `scripts/pitest.init.gradle`. | Works on the unmodified Ares build (step 1b), so D3 holds and no hand-built classpath is needed. |
+| D15 | Mutation testing uses the Gradle PIT plugin (`gradle-pitest-plugin` 1.19.0, PIT 1.30.2, pitest-junit5-plugin 1.2.3), added by the init script `pitest.init.gradle` (in the tool's resources since step 3). | Works on the unmodified Ares build (step 1b), so D3 holds and no hand-built classpath is needed. |
 | D16 | PIT gets the test task's JVM args (Ares agent, `--add-opens`), minus the JaCoCo agent. | Mutants run in the same JVM setup as grading. PIT splits args on commas, which breaks the JaCoCo arg, and PIT measures coverage itself. |
 | D17 | Mutator group `STRONGER`, not `DEFAULTS`. | With `DEFAULTS` the weak null test leaves no survivor: the negated null check is killed by other tests. Only "condition removed" exposes it. |
 | D18 | A mutant counts as detected when PIT says `detected='true'` (`KILLED`, `TIMED_OUT`, `RUN_ERROR`). `TIMED_OUT` and `RUN_ERROR` are shown as "detected by timeout". | Under `@StrictTimeout` an endless-loop mutant ends as `RUN_ERROR`, not `TIMED_OUT` (step 1b). Both mean the suite noticed. |
@@ -47,6 +47,13 @@ This file overrides `project-brief-test-validator.md` wherever they differ. One 
 | D31 | The course setup of WS 2026/27 is Java 17 + Gradle 8.12 (course instruction, 11.11.2026). `array-max` uses it; only the wrapper properties and the toolchain line differ from the Artemis template. The tool still hardcodes neither version. | Verified by running: freefair 9.8.0, Ares 2.2.1 (Java 17 bytecode) and AspectJ 1.9.25.1 work unchanged on Gradle 8.12. |
 | D32 | When Gradle reports a killed test JVM, results are repaired from the tool's own record of test starts and ends (`validator-test-events.tsv`, written by the init script). The hanging test is the one closed as SKIPPED with no test starting after it. The JUnit XML stays the only source for normal runs. | Gradle 8.12 writes no XML at all after a killed JVM, Gradle 9.8.0 a partial one where the hanging test looks `@Disabled`. The record is the same on both. |
 | D33 | Gradle runs on the JDK of the tool's environment, or of `--java-home`. No automatic JDK search. A "class file major version" failure gets a hint that names the fix. | Gradle 8.12 cannot start on JDK 25. Finding installed JDKs differs per OS and is not worth it in v1; the tests run on the build's toolchain either way. |
+| D34 | The mutation check runs `pitest` once, on the solution, in the work folder of the solution run and without `clean`. The tool reads PIT's `mutations.xml` with the JDK's XML parser. | PIT mutates exactly the classes that were just tested, with no second build. XML is PIT's stable machine-readable output, and the tool stays free of dependencies. |
+| D35 | PIT only starts when every test passed in the declared-order solution run. Otherwise the report says "Skipped" with the reason. | PIT first runs the suite unchanged and aborts if a test fails: a red test cannot tell a mutant from the original. |
+| D36 | The report shows counts ("11 mutants: 9 detected, 2 survived"), no percentage and no threshold. This replaces the brief's "mutation score". | One of the two survivors in the sample is an equivalent mutant no test can kill. "82%" would read as a defect of the suite; the count plus the list lets a human judge (D19). |
+| D37 | Undetected mutants and a failed PIT run are not findings and do not change the exit code. | A CI job must not go red over an equivalent mutant or a failed plugin download. The per-test verdicts stay the only pass/fail signal. |
+| D38 | The mutation check is on by default; `--no-mutation` skips it. | Weak tests are half of what the tool looks for, so the default report should show them. It costs one more Gradle run. |
+| D39 | Each undetected mutant is printed with the mutated source line, read from the solution in the work folder. The file is found by package path plus file name, because PIT gives no path. | A tutor can judge "missing test or equivalent mutant?" from the report alone, without opening PIT's HTML report. |
+| D40 | Mutants are listed as `SURVIVED` (tests ran the line and passed) or `NOT COVERED` (no test runs the line). Mutants detected without a failing assertion are counted as "by timeout or crash". | The two undetected kinds need different fixes: a stronger assertion or a new test. `RUN_ERROR` does not say whether it was a timeout or a crash (D18), so the label claims neither. |
 | D12 | Real course material is never committed. `local-exercises/` is git-ignored for local runs. | Brief constraint; course content is not ours to publish. |
 
 ## Findings from step 1 (verified by running)
@@ -58,7 +65,7 @@ This file overrides `project-brief-test-validator.md` wherever they differ. One 
 
 ## Findings from step 1b: PIT on the Ares build (verified by running)
 
-Run: `./gradlew pitest --init-script scripts/pitest.init.gradle` in a copy of `tests/` with the variant in `assignment/src`.
+Run: `./gradlew pitest --init-script <path to>/src/main/resources/dev/exercisevalidator/pitest.init.gradle` in a copy of `tests/` with the variant in `assignment/src`.
 
 | Sample | Variant | Mutants | Killed | Survived | Timed out | Run error |
 |---|---|---|---|---|---|---|
@@ -80,6 +87,7 @@ Run: `./gradlew pitest --init-script scripts/pitest.init.gradle` in a copy of `t
 
 - **Step 1 (done):** all three samples run on solution, both alternatives and template with the expected results. A solution without the null check scores 100% on every sample (weak test confirmed).
 - **Step 1b (done):** PIT runs on all three samples through an init script, finds the weak null test, and survives endless-loop mutants with and without `@StrictTimeout`.
+- **Step 3 (done):** the report has a mutation section: counts, plus every undetected mutant with its source line. Same result on all three samples: 11 mutants, 9 detected, 2 survived.
 - **Step 2 (done):** `validate <exercise>` runs the solution, flakiness and alternatives checks. All three samples give exactly one finding: `emptyArrayIsRejected()` fails on `b-other-message`. Run times with 10 random-order runs and 3 alternatives: about 1 min (plain) to 2 min (Ares).
 
 ## Findings from step 2 (verified by running)
@@ -99,3 +107,20 @@ Run: `./gradlew pitest --init-script scripts/pitest.init.gradle` in a copy of `t
 - **Killed test JVM, no XML**: with an endless loop under `@StrictTimeout`, Gradle 8.12 leaves `build/test-results/test` without any XML; 9.8.0 writes the tests up to the hanging one. With D32 both give the same report: `TIMEOUT` for the hanging test, `NOT CHECKED` for the rest. Artemis reads the same XML, so on 8.12 a student's endless loop probably shows as a failed build without per-test feedback (not tested on Artemis).
 - **Gradle closes the hanging test as SKIPPED** in its test events on both versions, so "started but never ended" does not identify it; "skipped and nothing started afterwards" does.
 - **PIT is unchanged** on `array-max` with 8.12 + 17: solution 11 mutants, 9 killed, 2 survived; `c-while-loop` 8 killed, 1 survived, 2 timed out. Same on a style B copy (2 `RUN_ERROR` instead of timed out).
+
+## Findings from step 3: PIT in the report (verified by running, 11.11.2026)
+
+Run: `validate <exercise> --runs 2 --seed 1` with the tool on JDK 17.
+
+| Sample | Setup | Mutants | Detected | Survived | Not covered |
+|---|---|---|---|---|---|
+| array-max-plain | Gradle 9.8.0, Java 17, no Ares | 11 | 9 | 2 | 0 |
+| array-max | Gradle 8.12, Java 17, Ares | 11 | 9 | 2 | 0 |
+| array-max-ares | Gradle 9.8.0, Java 25, Ares, `--java-home` JDK 25 | 11 | 9 | 2 | 0 |
+| copy of array-max-ares with `c-while-loop` as the solution | as above | 11 | 10 (2 by timeout or crash) | 1 | 0 |
+
+- **Same numbers as the step 1b spike** on every setup, now from the tool's own report instead of a manual PIT run.
+- **Both survivors are shown with their line**: line 9 (null check removed, the weak `nullArrayIsRejected`) and line 14 (`>` to `>=`, the equivalent mutant).
+- **Endless-loop mutants under `@StrictTimeout`** end as `RUN_ERROR` and show up as "2 of them by timeout or crash". The run continues and the report is complete.
+- **Cost:** PIT adds one Gradle run to the solution. The whole plain sample with 2 random-order runs and 3 alternatives took 44 s.
+- **Limits.** PIT's description of a removed condition names the bytecode branch ("replaced equality check with true"), which can read inverted next to the source line. The mutator group is fixed to `STRONGER`. PIT runs on the solution only, not on alternatives.
