@@ -54,6 +54,11 @@ This file overrides `project-brief-test-validator.md` wherever they differ. One 
 | D38 | The mutation check is on by default; `--no-mutation` skips it. | Weak tests are half of what the tool looks for, so the default report should show them. It costs one more Gradle run. |
 | D39 | Each undetected mutant is printed with the mutated source line, read from the solution in the work folder. The file is found by package path plus file name, because PIT gives no path. | A tutor can judge "missing test or equivalent mutant?" from the report alone, without opening PIT's HTML report. |
 | D40 | Mutants are listed as `SURVIVED` (tests ran the line and passed) or `NOT COVERED` (no test runs the line). Mutants detected without a failing assertion are counted as "by timeout or crash". | The two undetected kinds need different fixes: a stronger assertion or a new test. `RUN_ERROR` does not say whether it was a timeout or a crash (D18), so the label claims neither. |
+| D41 | On a build with Ares 1 (`artemis-java-test-sandbox`), the PIT run makes Ares trust the solution's classes and `org.pitest`, with Ares' own system properties `ares.security.trustedpackages` and `ares.gradle.ignore`. Only the PIT run, only when Ares 1 is on the test classpath; the report says so. | Ares 1 has a security manager that forbids untrusted code to load `sun.*`, where PIT's coverage probes live, and distrusts PIT's frames on the stack. The code that is trusted is the tutor's own solution, and the graded runs (solution, flakiness, alternatives) stay sandboxed. Refines D16. |
+| D42 | The two properties reach PIT's test JVMs through `JAVA_TOOL_OPTIONS` on the `pitest` task, not through PIT's `jvmArgs`. | The trusted list contains commas, and PIT splits `jvmArgs` on commas (D16). No build file is edited (D3). |
+| D43 | Mutants in a `main(String[])` that no test runs are left out of the counts and named in one line. A `main` with at least one covered mutant is reported like any other method. | Exercises ship a demo `main` that is not graded; on a real exercise it produced half of all hints. Nothing is hidden, and a tested `main` is not assumed to be a demo. |
+| D44 | A method in which no mutant is covered is printed as one line with its line range and mutant count. | "No test runs this method" is one gap, not one per mutant (9 lines for one untested method on a real exercise). |
+| D45 | When PIT gives no report, the tool shows PIT's own reason: the tests that failed only inside PIT by name, or PIT's error line. Gradle's text is the fallback. | Gradle only says "java finished with non-zero exit value 1". |
 | D12 | Real course material is never committed. `local-exercises/` is git-ignored for local runs. | Brief constraint; course content is not ours to publish. |
 
 ## Findings from step 1 (verified by running)
@@ -124,3 +129,15 @@ Run: `validate <exercise> --runs 2 --seed 1` with the tool on JDK 17.
 - **Endless-loop mutants under `@StrictTimeout`** end as `RUN_ERROR` and show up as "2 of them by timeout or crash". The run continues and the report is complete.
 - **Cost:** PIT adds one Gradle run to the solution. The whole plain sample with 2 random-order runs and 3 alternatives took 44 s.
 - **Limits.** PIT's description of a removed condition names the bytecode branch ("replaced equality check with true"), which can read inverted next to the source line. The mutator group is fixed to `STRONGER`. PIT runs on the solution only, not on alternatives.
+
+## Findings from the trial on six real exercises (verified by running, 11.11.2026)
+
+The tool ran on six real course exercises (not in this repo, D12). All solutions passed, no test was flaky. Two tool bugs came out of it and were reproduced on the self-written fixture `src/test/exercises/ares1-sandbox` (Java 17, Gradle 8.12, Ares 1.13.0).
+
+- **Ares 1 blocks PIT.** PIT's log shows `BAD PACKAGE ACCESS: sun.pitest`, every test fails in PIT's coverage run, and PIT stops with "tests did not pass without mutation". Ares 1 lists `sun.` as a package untrusted code may not use.
+- **Trusting the solution is not enough.** With only the solution trusted, the coverage run is green, but every mutant is reported `KILLED` with `numberOfTestsRun='0'`: Ares now rejects `org.pitest` frames on the stack, so each test fails before it runs. A wrong "all mutants killed" is worse than a crash, which is why `org.pitest` is trusted too (D41).
+- **Ares checks the build file.** A trusted package without a matching rule in `build.gradle` gives a `ConfigurationException`; `ares.gradle.ignore=true` switches that check off without touching the file.
+- **Result with D41:** 11 mutants, 9 detected, 2 survived on the fixture, the same as the three samples. Same numbers with Ares 1.11.3 and 1.15.0. A class in the default package works, because Ares matches the trusted list as a prefix of the class name. Ares 1.8.0 does not start on Java 17 at all, with or without the tool.
+- **Endless-loop mutants under Ares 1** fail the test through `@StrictTimeout` without killing the JVM, so they count as `KILLED`, not as "by timeout or crash".
+- **Demo `main`:** the fixture's `Main.main` yields 5 mutants no test covers; they are left out and named in one line (D43).
+- **Limit.** The mutants of the solution run without the Ares sandbox. A suite that expects a `SecurityException` from the solution would behave differently in the PIT run; none of the real exercises does.

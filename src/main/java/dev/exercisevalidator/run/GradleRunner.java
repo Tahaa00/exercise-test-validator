@@ -35,6 +35,13 @@ public final class GradleRunner implements VariantRunner {
     private static final Pattern TEST_JVM_KILLED =
             Pattern.compile("Process 'Gradle Test Executor \\d+' finished with non-zero exit value");
 
+    /** Printed by pitest.init.gradle when it had to make Ares 1 trust the solution and PIT. */
+    private static final String ARES1_TRUSTED = "VALIDATOR_PIT_ARES1_TRUSTED=true";
+    private static final Pattern PIT_RED_SUITE = Pattern.compile("(\\d+) tests? did not pass without mutation");
+    /** PIT names a failing test as "Description [testClass=..., name=.../[method:name()]] did not pass without mutation". */
+    private static final Pattern PIT_FAILED_TEST = Pattern.compile("\\[method:([^\\]]+)]] did not pass without mutation");
+    private static final Pattern PIT_ERROR = Pattern.compile("org\\.pitest\\.help\\.PitHelpError: (.+)");
+
     private final Duration runTimeout;
     private final boolean keepWork;
     private final Path javaHome;
@@ -135,11 +142,14 @@ public final class GradleRunner implements VariantRunner {
                 return MutationResult.failed("PIT did not finish within " + runTimeout.toMinutes()
                         + " min and was stopped. Raise the limit with --timeout-minutes.");
             }
+            String output = Files.readString(log);
             Path xml = report.resolve("mutations.xml");
             if (exit != 0 || !Files.isRegularFile(xml)) {
-                return MutationResult.failed(whatWentWrong(Files.readString(log)));
+                return MutationResult.failed(pitProblem(output));
             }
-            return MutationResult.ran(PitXmlReader.read(xml, work.resolve("assignment/src")));
+            String remark = output.contains(ARES1_TRUSTED) ? "This build uses Ares 1, whose security manager blocks PIT. "
+                    + "For this PIT run only, Ares was told to trust the solution's classes and PIT." : null;
+            return MutationResult.ran(PitXmlReader.read(xml, work.resolve("assignment/src")), remark);
         }
 
         /** Runs the exercise's Gradle wrapper with the output in a log file. Returns the exit code, or null when the time limit hit. */
@@ -198,6 +208,32 @@ public final class GradleRunner implements VariantRunner {
         int end = output.indexOf("* Try:", start);
         String text = output.substring(start + "* What went wrong:".length(), end < 0 ? output.length() : end);
         return text.lines().map(String::stripTrailing).filter(l -> !l.isBlank()).limit(25).collect(Collectors.joining("\n"));
+    }
+
+    /**
+     * Why PIT gave no report. PIT's own reason beats Gradle's, which is only "java finished with non-zero exit value 1".
+     */
+    static String pitProblem(String output) {
+        Matcher redSuite = PIT_RED_SUITE.matcher(output);
+        if (redSuite.find()) {
+            List<String> tests = PIT_FAILED_TEST.matcher(output).results().map(r -> r.group(1)).distinct().toList();
+            String count = redSuite.group(1) + (redSuite.group(1).equals("1") ? " test that passes" : " tests that pass");
+            String message = count + " in the normal run failed when PIT ran the suite"
+                    + (tests.isEmpty() ? "" : ": " + String.join(", ", tests)) + ".\n"
+                    + "PIT needs a green suite before it makes mutants. It starts the tests itself and adds coverage probes "
+                    + "to the solution's classes, so a sandbox or a test that relies on the Gradle test task can fail there.";
+            if (output.contains("BAD PACKAGE ACCESS: sun.pitest")) {
+                message += "\nHere the Ares security manager blocked PIT's probes (\"BAD PACKAGE ACCESS: sun.pitest\")"
+                        + (output.contains(ARES1_TRUSTED) ? ", although the tool asked Ares to trust them. This Ares version"
+                        + " probably does not know the ares.security.trustedpackages property." : ".");
+            }
+            return message + "\nDetails are in " + PIT_LOG_FILE + " in the work folder (--keep-work).";
+        }
+        Matcher pitError = PIT_ERROR.matcher(output);
+        if (pitError.find()) {
+            return "PIT stopped: " + pitError.group(1).strip() + "\nDetails are in " + PIT_LOG_FILE + " in the work folder (--keep-work).";
+        }
+        return whatWentWrong(output);
     }
 
     /**

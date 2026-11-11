@@ -48,7 +48,8 @@ public final class PitXmlReader {
             int line = Integer.parseInt(text(element, "lineNumber"));
             List<String> lines = sources.computeIfAbsent(className + "/" + sourceFile,
                     key -> sourceLines(sourceRoot, className, sourceFile));
-            mutants.add(new Mutant(sourceFile, className, text(element, "mutatedMethod"), line, text(element, "description"),
+            mutants.add(new Mutant(sourceFile, className, text(element, "mutatedMethod"),
+                    text(element, "methodDescription"), line, text(element, "description"),
                     element.getAttribute("status"), Boolean.parseBoolean(element.getAttribute("detected")),
                     line >= 1 && line <= lines.size() ? lines.get(line - 1).strip() : ""));
         }

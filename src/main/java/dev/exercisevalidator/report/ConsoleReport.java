@@ -1,6 +1,12 @@
 package dev.exercisevalidator.report;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import dev.exercisevalidator.check.Report;
 import dev.exercisevalidator.check.Verdict;
@@ -73,7 +79,7 @@ public final class ConsoleReport {
                     .append(mutation.note().replace("\n", "\n    ")).append("\n\n");
             return;
         }
-        List<Mutant> mutants = mutation.mutants();
+        List<Mutant> mutants = mutation.counted();
         List<Mutant> undetected = mutation.undetected();
         long other = undetected.stream().filter(m -> !m.survived() && !m.notCovered()).count();
         // Counts only, no percentage: an equivalent mutant can never be killed, so "82%" would look like a defect.
@@ -88,24 +94,72 @@ public final class ConsoleReport {
             out.append(", ").append(other).append(" other");
         }
         out.append("\n\n");
-        if (undetected.isEmpty()) {
-            return;
-        }
-        int placeWidth = undetected.stream().mapToInt(m -> place(m).length()).max().orElse(0);
-        int methodWidth = undetected.stream().mapToInt(m -> m.method().length()).max().orElse(0) + 2;
-        for (Mutant mutant : undetected) {
-            out.append("  ").append(String.format("%-13s", label(mutant)))
-                    .append(String.format("%-" + placeWidth + "s", place(mutant))).append("  ")
-                    .append(String.format("%-" + methodWidth + "s", mutant.method() + "()")).append("  ")
-                    .append(mutant.description()).append('\n');
-            if (!mutant.sourceLine().isEmpty()) {
-                out.append("  ").append(String.format("%-13s", "")).append("  ").append(mutant.sourceLine()).append('\n');
+
+        List<Row> rows = rows(mutants, undetected);
+        int placeWidth = rows.stream().mapToInt(r -> r.place().length()).max().orElse(0);
+        int methodWidth = rows.stream().mapToInt(r -> r.method().length()).max().orElse(0);
+        for (Row row : rows) {
+            out.append("  ").append(String.format("%-13s", row.label()))
+                    .append(String.format("%-" + placeWidth + "s", row.place())).append("  ")
+                    .append(String.format("%-" + methodWidth + "s", row.method())).append("  ")
+                    .append(row.text()).append('\n');
+            if (!row.sourceLine().isEmpty()) {
+                out.append("  ").append(String.format("%-13s", "")).append("  ").append(row.sourceLine()).append('\n');
             }
         }
-        out.append('\n');
-        out.append("  These are hints, not errors. SURVIVED: tests ran the changed line and still passed, so a test\n")
-                .append("  may be missing or too weak, or the mutant is equivalent (same behaviour as the original).\n")
-                .append("  NOT COVERED: no test runs that line.\n\n");
+        if (!rows.isEmpty()) {
+            out.append('\n');
+            out.append("  These are hints, not errors. SURVIVED: tests ran the changed line and still passed, so a test\n")
+                    .append("  may be missing or too weak, or the mutant is equivalent (same behaviour as the original).\n")
+                    .append("  NOT COVERED: no test runs that line.\n\n");
+        }
+        List<Mutant> leftOut = mutation.leftOut();
+        if (!leftOut.isEmpty()) {
+            String mains = leftOut.stream().map(m -> simpleName(m.className()) + ".main(String[])").distinct()
+                    .collect(Collectors.joining(", "));
+            out.append("  Left out: ").append(leftOut.size()).append(leftOut.size() == 1 ? " mutant in " : " mutants in ").append(mains)
+                    .append(". No test runs it, as usual for a demo entry point.\n\n");
+        }
+        if (mutation.note() != null) {
+            out.append("  Note: ").append(mutation.note()).append("\n\n");
+        }
+    }
+
+    /** One printed line of the mutant list, plus the quoted source line below it. */
+    private record Row(String label, String place, String method, String text, String sourceLine) {
+    }
+
+    /**
+     * One row per undetected mutant. The exception: a method in which no mutant at all is covered gets a single row,
+     * because "no test runs this method" is one gap, however many mutants PIT can make in it.
+     */
+    private static List<Row> rows(List<Mutant> mutants, List<Mutant> undetected) {
+        Map<String, List<Mutant>> byMethod = new LinkedHashMap<>();
+        mutants.forEach(m -> byMethod.computeIfAbsent(methodKey(m), key -> new ArrayList<>()).add(m));
+        List<Row> rows = new ArrayList<>();
+        Set<String> collapsed = new HashSet<>();
+        for (Mutant mutant : undetected) {
+            List<Mutant> method = byMethod.get(methodKey(mutant));
+            if (method.size() > 1 && method.stream().allMatch(Mutant::notCovered)) {
+                if (collapsed.add(methodKey(mutant))) {
+                    int first = method.stream().mapToInt(Mutant::line).min().orElse(mutant.line());
+                    int last = method.stream().mapToInt(Mutant::line).max().orElse(mutant.line());
+                    rows.add(new Row("NOT COVERED", mutant.sourceFile() + ":" + first + (last > first ? "-" + last : ""),
+                            mutant.method() + "()", method.size() + " mutants, no test runs any of these lines", ""));
+                }
+            } else {
+                rows.add(new Row(label(mutant), place(mutant), mutant.method() + "()", mutant.description(), mutant.sourceLine()));
+            }
+        }
+        return rows;
+    }
+
+    private static String methodKey(Mutant mutant) {
+        return mutant.className() + "#" + mutant.method() + mutant.descriptor();
+    }
+
+    private static String simpleName(String className) {
+        return className.substring(className.lastIndexOf('.') + 1);
     }
 
     private static String label(Mutant mutant) {

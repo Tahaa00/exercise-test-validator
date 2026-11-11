@@ -110,6 +110,11 @@ for each. A mutant no test notices is listed with its line. In the sample above:
 PIT is added through a Gradle init script and runs with the test task's JVM arguments (Ares agent included),
 so the exercise's build files stay untouched. It only runs when every test passes on the solution.
 
+- A method no test runs at all is one line with its line range, not one line per mutant.
+- A `main(String[])` no test runs (the usual demo entry point) is left out of the counts and named in one line.
+- Older exercises on Ares 1 run the tests under a security manager that blocks PIT. For the PIT run only, the tool
+  tells Ares to trust the solution's classes and PIT, and the report says so. The graded runs stay sandboxed.
+
 Options: `--runs <n>` (random-order runs, default 10), `--seed <n>` (replay the same runs),
 `--no-mutation` (skip the mutation check),
 `--timeout-minutes <n>` (limit per Gradle run, default 10), `--java-home <path>` (JDK to start the exercise's Gradle with),
@@ -120,5 +125,5 @@ Exit code: 0 no findings, 1 findings, 2 the solution could not be run.
 
 ```bash
 ./gradlew test             # unit tests, fast and offline
-./gradlew integrationTest  # real Gradle runs on the plain sample and a flaky fixture (needs JDK 17)
+./gradlew integrationTest  # real Gradle runs: plain sample, flaky fixture, Ares 1 fixture (needs JDK 17)
 ```

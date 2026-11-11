@@ -222,8 +222,8 @@ class ValidatorTest {
         RunResult green = solution(test("a()", TestOutcome.PASS));
         runner.script.put("solution", List.of(green, green));
         runner.mutation = MutationResult.ran(List.of(
-                new Mutant("A.java", "p.A", "m", 3, "negated conditional", "KILLED", true, ""),
-                new Mutant("A.java", "p.A", "m", 4, "changed conditional boundary", "SURVIVED", false, "if (a > b) {")));
+                new Mutant("A.java", "p.A", "m", "()V", 3, "negated conditional", "KILLED", true, ""),
+                new Mutant("A.java", "p.A", "m", "()V", 4, "changed conditional boundary", "SURVIVED", false, "if (a > b) {")));
 
         Report report = new Validator(runner, step -> { }).validate(EXERCISE, 1, 1, true);
 
