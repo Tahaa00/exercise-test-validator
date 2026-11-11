@@ -1,0 +1,46 @@
+// Plain Gradle build without Ares: same layout as the Artemis template (student code in assignment/src,
+// tests in test/), but no AspectJ weaving and no Ares agent. It is the baseline for the PIT spike:
+// if PIT works here and fails on array-max, Ares is the cause.
+plugins {
+    id 'java'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.14.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['assignment/src']
+        }
+        resources {
+            srcDirs = []
+        }
+    }
+    test {
+        java {
+            srcDir 'test'
+        }
+        resources {
+            srcDir 'test'
+        }
+    }
+}
+
+test {
+    defaultCharacterEncoding = 'UTF-8'
+    useJUnitPlatform()
+}
