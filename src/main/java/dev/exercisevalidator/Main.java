@@ -1,18 +1,79 @@
 package dev.exercisevalidator;
 
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.concurrent.ThreadLocalRandom;
+
+import dev.exercisevalidator.check.Report;
+import dev.exercisevalidator.check.Validator;
+import dev.exercisevalidator.report.ConsoleReport;
+import dev.exercisevalidator.run.Exercise;
+import dev.exercisevalidator.run.GradleRunner;
+
 /**
- * Entry point. Step 1 only ships the sample exercises; the checks arrive in step 2.
+ * Command line entry point: {@code validate <exercise-folder> [options]}.
+ * Exit code 0 = no findings, 1 = findings, 2 = usage error or the solution could not be run.
  */
 public final class Main {
+
+    private static final String USAGE = """
+            Usage: validate <exercise-folder> [options]
+
+              --runs <n>             random-order runs for the flakiness check (default 10, 0 = off)
+              --seed <n>             base seed of the random-order runs (default: random, printed in the report)
+              --timeout-minutes <n>  limit for one Gradle run (default 10)
+              --keep-work            keep the temporary work folders and Gradle logs
+            """;
 
     private Main() {
     }
 
-    public static void main(String[] args) {
-        if (args.length != 2 || !"validate".equals(args[0])) {
-            System.err.println("Usage: validate <exercise-folder>");
+    public static void main(String[] args) throws Exception {
+        Path folder = null;
+        int runs = 10;
+        long seed = ThreadLocalRandom.current().nextLong(1_000_000);
+        long timeoutMinutes = 10;
+        boolean keepWork = false;
+        try {
+            if (args.length < 2 || !"validate".equals(args[0])) {
+                throw new IllegalArgumentException("Expected: validate <exercise-folder>");
+            }
+            folder = Path.of(args[1]);
+            for (int i = 2; i < args.length; i++) {
+                switch (args[i]) {
+                    case "--runs" -> runs = Math.toIntExact(number(args, ++i, 0));
+                    case "--seed" -> seed = number(args, ++i, Long.MIN_VALUE);
+                    case "--timeout-minutes" -> timeoutMinutes = number(args, ++i, 1);
+                    case "--keep-work" -> keepWork = true;
+                    default -> throw new IllegalArgumentException("Unknown option: " + args[i]);
+                }
+            }
+            Exercise exercise = Exercise.open(folder);
+            Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(timeoutMinutes), keepWork),
+                    step -> System.err.println("  running " + step)); // progress on stderr keeps stdout a clean report
+            Report report = validator.validate(exercise, runs, seed);
+            System.out.print(ConsoleReport.render(report));
+            System.exit(report.exitCode());
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            System.err.println();
+            System.err.print(USAGE);
             System.exit(2);
         }
-        System.out.println("Checks are not implemented yet (build step 2). Exercise: " + args[1]);
+    }
+
+    private static long number(String[] args, int index, long min) {
+        if (index >= args.length) {
+            throw new IllegalArgumentException(args[index - 1] + " needs a number");
+        }
+        try {
+            long value = Long.parseLong(args[index]);
+            if (value < min) {
+                throw new IllegalArgumentException(args[index - 1] + " must be at least " + min);
+            }
+            return value;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(args[index - 1] + " needs a number, got: " + args[index]);
+        }
     }
 }
