@@ -2,6 +2,8 @@ package dev.exercisevalidator.check;
 
 import java.util.List;
 
+import dev.exercisevalidator.run.MutationResult;
+
 /**
  * Everything the checks found, independent of how it is printed (console now, Markdown/JSON later).
  *
@@ -11,10 +13,14 @@ import java.util.List;
  * @param baseSeed     seed the random-order run seeds were derived from; the same value reproduces the same runs
  * @param problems     runs that could not be done (an alternative that does not build, an aborted flakiness check)
  * @param warnings     things that are not wrong but will surprise, such as test names Artemis cannot bind
+ * @param mutation     result of the mutation check, or null when it was switched off or never reached.
+ *                     Survivors are hints for a human (some mutants are equivalent to the original),
+ *                     so they count neither as findings nor towards the exit code.
  * @param fatal        set when the solution itself could not be run; then there are no verdicts
  */
 public record Report(String exercise, String javaVersion, List<String> alternatives, int shuffledRuns, long baseSeed,
-                     List<Verdict> verdicts, List<String> problems, List<String> warnings, String fatal) {
+                     List<Verdict> verdicts, List<String> problems, List<String> warnings, MutationResult mutation,
+                     String fatal) {
 
     public long count(Verdict.Status status) {
         return verdicts.stream().filter(v -> v.status() == status).count();

@@ -21,13 +21,15 @@ import java.util.stream.Collectors;
  * Runs a variant the way Artemis CI does: copy {@code tests/} to a fresh folder, put the variant's {@code src}
  * into {@code assignment/src}, run the exercise's own Gradle wrapper, read the JUnit XML.
  *
- * <p>The exercise's build files are never edited. The tool's additions (random test order) come in through an
- * init script on the command line, so what we measure is the build that grades students.
+ * <p>The exercise's build files are never edited. The tool's additions (random test order, PIT) come in through
+ * init scripts on the command line, so what we measure is the build that grades students.
  */
 public final class GradleRunner implements VariantRunner {
 
     private static final String INIT_SCRIPT = "validator.init.gradle";
+    private static final String PIT_SCRIPT = "pitest.init.gradle";
     private static final String LOG_FILE = "validator-gradle.log";
+    private static final String PIT_LOG_FILE = "validator-pitest.log";
     private static final Pattern JAVA_VERSION = Pattern.compile("^VALIDATOR_JAVA_VERSION=(.+)$", Pattern.MULTILINE);
     /** Gradle's message when a forked test JVM exits by itself, e.g. killed by Ares after a strict timeout (exit 124). */
     private static final Pattern TEST_JVM_KILLED =
@@ -58,8 +60,10 @@ public final class GradleRunner implements VariantRunner {
         Path work = Files.createTempDirectory("validator-" + exercise.name() + "-");
         copyTree(exercise.tests(), work, true);
         copyTree(source, work.resolve("assignment/src"), false);
-        try (InputStream script = GradleRunner.class.getResourceAsStream("/dev/exercisevalidator/" + INIT_SCRIPT)) {
-            Files.copy(script, work.resolve(INIT_SCRIPT), StandardCopyOption.REPLACE_EXISTING);
+        for (String name : List.of(INIT_SCRIPT, PIT_SCRIPT)) {
+            try (InputStream script = GradleRunner.class.getResourceAsStream("/dev/exercisevalidator/" + name)) {
+                Files.copy(script, work.resolve(name), StandardCopyOption.REPLACE_EXISTING);
+            }
         }
         return new GradleSession(variant, work);
     }
@@ -90,29 +94,16 @@ public final class GradleRunner implements VariantRunner {
             Path results = work.resolve("build/test-results/test");
             deleteTree(results); // never read XML left over from a previous run
 
-            List<String> command = new ArrayList<>(wrapper());
-            command.addAll(List.of(tasks));
-            // --no-daemon: the build runs in a child process of the wrapper instead of a shared background daemon.
-            // That costs a few seconds per run, but a hanging build can then be killed without "gradlew --stop",
-            // which would also stop the user's other Gradle builds (and did stop this tool's own test run).
-            command.addAll(List.of("--no-daemon", "--console=plain", "--init-script", INIT_SCRIPT));
             Path log = work.resolve(LOG_FILE);
-            ProcessBuilder builder = new ProcessBuilder(command);
-            if (javaHome != null) {
-                builder.environment().put("JAVA_HOME", javaHome.toString());
-            }
-            Process process = builder
-                    .directory(work.toFile())
-                    .redirectErrorStream(true)
-                    .redirectOutput(log.toFile()) // to a file: a full pipe nobody reads would block Gradle
-                    .start();
-            if (!process.waitFor(runTimeout.toSeconds(), TimeUnit.SECONDS)) {
-                stopBuild(process);
+            List<String> arguments = new ArrayList<>(List.of(tasks));
+            arguments.addAll(List.of("--init-script", INIT_SCRIPT));
+            Integer exitOrNull = execute(arguments, log);
+            if (exitOrNull == null) {
                 return new RunResult(variant, seed, RunResult.Build.TIMED_OUT, false, null, List.of(),
                         "The Gradle run did not finish within " + runTimeout.toMinutes() + " min and was stopped. "
                                 + "A test probably hangs and the suite has no timeout.");
             }
-            int exit = process.exitValue();
+            int exit = exitOrNull;
             String output = Files.readString(log);
             Matcher version = JAVA_VERSION.matcher(output);
             String javaVersion = version.find() ? version.group(1).strip() : null;
@@ -131,6 +122,48 @@ public final class GradleRunner implements VariantRunner {
                                 whatWentWrong(output) + jdkHint(output));
             }
             return new RunResult(variant, seed, RunResult.Build.RAN, jvmKilled, javaVersion, tests, null);
+        }
+
+        @Override
+        public MutationResult mutate() throws IOException, InterruptedException {
+            Path report = work.resolve("build/reports/pitest");
+            deleteTree(report);
+            Path log = work.resolve(PIT_LOG_FILE);
+            // No "clean": PIT mutates the classes the solution run compiled (and Ares wove), in memory, one at a time.
+            Integer exit = execute(List.of("pitest", "--init-script", PIT_SCRIPT), log);
+            if (exit == null) {
+                return MutationResult.failed("PIT did not finish within " + runTimeout.toMinutes()
+                        + " min and was stopped. Raise the limit with --timeout-minutes.");
+            }
+            Path xml = report.resolve("mutations.xml");
+            if (exit != 0 || !Files.isRegularFile(xml)) {
+                return MutationResult.failed(whatWentWrong(Files.readString(log)));
+            }
+            return MutationResult.ran(PitXmlReader.read(xml, work.resolve("assignment/src")));
+        }
+
+        /** Runs the exercise's Gradle wrapper with the output in a log file. Returns the exit code, or null when the time limit hit. */
+        private Integer execute(List<String> arguments, Path log) throws IOException, InterruptedException {
+            List<String> command = new ArrayList<>(wrapper());
+            command.addAll(arguments);
+            // --no-daemon: the build runs in a child process of the wrapper instead of a shared background daemon.
+            // That costs a few seconds per run, but a hanging build can then be killed without "gradlew --stop",
+            // which would also stop the user's other Gradle builds (and did stop this tool's own test run).
+            command.addAll(List.of("--no-daemon", "--console=plain"));
+            ProcessBuilder builder = new ProcessBuilder(command);
+            if (javaHome != null) {
+                builder.environment().put("JAVA_HOME", javaHome.toString());
+            }
+            Process process = builder
+                    .directory(work.toFile())
+                    .redirectErrorStream(true)
+                    .redirectOutput(log.toFile()) // to a file: a full pipe nobody reads would block Gradle
+                    .start();
+            if (!process.waitFor(runTimeout.toSeconds(), TimeUnit.SECONDS)) {
+                stopBuild(process);
+                return null;
+            }
+            return process.exitValue();
         }
 
         private List<String> wrapper() {
