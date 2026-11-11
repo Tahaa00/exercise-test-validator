@@ -21,7 +21,7 @@ This file overrides `project-brief-test-validator.md` wherever they differ. One 
 | D4 | Never hardcode a Java version for exercises; the toolchain in the tests build decides. | Tutors pick 17, 21 or 25 per exercise. |
 | D5 | The tool itself targets Java 17 and uses the Gradle 9.8.0 wrapper. | 17 is the oldest JDK in use; Gradle 9.8.0 matches the course and runs on JDK 17 to 25. |
 | D6 | JUnit 5.14.4 for the tool and the plain sample, not JUnit 6. | pitest-junit5-plugin 1.2.3 (May 2025) predates JUnit 6. Ares 2.2.1 brings its own JUnit. |
-| D7 | Samples: `array-max` (Artemis build, style A), `array-max-ares` (Artemis build, style B), `array-max-plain` (no Ares, Java 17). | Covers both real test styles on the real build, plus a no-Ares baseline for PIT and a Java 17 case for CI. |
+| D7 | Samples: `array-max` (Artemis build, style A, **Gradle 8.12 + Java 17** since D31), `array-max-ares` (Artemis build, style B, Gradle 9.8.0 + Java 25), `array-max-plain` (no Ares, Java 17). | Covers both real test styles on the real build, both build setups in use, plus a no-Ares baseline for PIT. |
 | D8 | Sample build files are rendered from the **public** Artemis template (ls1intum/Artemis), not copied from course repos; the Artemis Maven mirror is removed. | No course material in the public repo; the mirror is TUM-internal. |
 | D9 | Each sample suite has exactly one over-specified test (exact exception message) and one weak test (`assertThrows(RuntimeException.class)` on null). | Gives the report one false fail and one false pass to show. |
 | D10 | Timeout failures are reported separately from normal failures. | `@StrictTimeout(2)` makes slow CI or slow mutants look like wrong answers. |
@@ -35,7 +35,7 @@ This file overrides `project-brief-test-validator.md` wherever they differ. One 
 | D19 | Survivors are reported as hints with line and mutation, never as a verdict or a score. | Equivalent mutants survive every suite (`>` to `>=` in the sample), so a human has to judge. |
 | D20 | PIT target classes and tests are read from the build's `main` and `test` source sets. | PIT rejects a catch-all filter and the exercise's package is not known up front. |
 | D21 | The runner is Java (`GradleRunner`: `ProcessBuilder` + the JDK's XML parser, no dependencies). The checks only see the `VariantRunner` interface. | One code path for all checks, and the verdict logic is unit-tested with scripted results, without starting Gradle. |
-| D22 | Five outcomes per test and run: `PASS`, `FAIL`, `TIMEOUT`, `SKIPPED`, `NOT_RUN`. `<skipped/>` means `TIMEOUT` when Gradle reports that the test JVM died in that run, else `SKIPPED`. A failure whose type or message is a JUnit timeout is `TIMEOUT` too. | In the XML a test killed by `@StrictTimeout` looks exactly like `@Disabled`; only the process exit tells them apart. |
+| D22 | Five outcomes per test and run: `PASS`, `FAIL`, `TIMEOUT`, `SKIPPED`, `NOT_RUN`. A failure whose type or message is a JUnit timeout is `TIMEOUT`. For a killed test JVM see D32. | Timeouts point to a slow machine or an endless loop, not a wrong answer (D10). |
 | D23 | The expected test list is the union of test names over all runs. A test missing from a run is `NOT_RUN`, never passed. | After a killed JVM the later tests are absent from the XML, so no single run is a reliable list. |
 | D24 | Solution check = one `clean test` in the declared order. Flakiness check = N more runs (`--runs`, default 10) with `test --rerun` in the same work folder, in random method and class order set through JUnit's configuration parameters. | The first run is exactly Artemis' run. The reruns reuse the compiled and woven classes: same binaries, and no rebuild per run. |
 | D25 | Run seeds are drawn from `SplittableRandom(baseSeed)`, not `baseSeed + i`. The report prints the base seed (`--seed` replays all runs) and the seed of each failing run. | Found by running: JUnit shuffles with `java.util.Random`, and ten consecutive seeds gave the same order, so an order-dependent test looked stable. |
@@ -44,6 +44,9 @@ This file overrides `project-brief-test-validator.md` wherever they differ. One 
 | D28 | One status per test, in this order: `REJECTED` (not passing on the solution), `FLAKY`, `OVER-SPECIFIED?`, `NOT CHECKED` (some run never reached it), `OK`. Exit code 0 = no findings, 1 = findings, 2 = the solution could not be run. | A flaky test's other results are unreliable, so flaky outranks over-specified. `NOT CHECKED` keeps a killed JVM from looking like a pass. The exit code makes the tool usable in CI. |
 | D29 | The init script also prints the toolchain's Java version, which the report shows. It changes nothing in the build. | D4: the version is read, never assumed. |
 | D30 | The tool's tests: unit tests in `test`, real Gradle runs in a separate `integrationTest` task (plain sample plus a flaky fixture in `src/test/exercises`, which borrows the plain sample's build files). | `./gradlew test` stays fast and offline. The flaky case lives outside `exercises/` so D9 holds. |
+| D31 | The course setup of WS 2026/27 is Java 17 + Gradle 8.12 (course instruction, 11.11.2026). `array-max` uses it; only the wrapper properties and the toolchain line differ from the Artemis template. The tool still hardcodes neither version. | Verified by running: freefair 9.8.0, Ares 2.2.1 (Java 17 bytecode) and AspectJ 1.9.25.1 work unchanged on Gradle 8.12. |
+| D32 | When Gradle reports a killed test JVM, results are repaired from the tool's own record of test starts and ends (`validator-test-events.tsv`, written by the init script). The hanging test is the one closed as SKIPPED with no test starting after it. The JUnit XML stays the only source for normal runs. | Gradle 8.12 writes no XML at all after a killed JVM, Gradle 9.8.0 a partial one where the hanging test looks `@Disabled`. The record is the same on both. |
+| D33 | Gradle runs on the JDK of the tool's environment, or of `--java-home`. No automatic JDK search. A "class file major version" failure gets a hint that names the fix. | Gradle 8.12 cannot start on JDK 25. Finding installed JDKs differs per OS and is not worth it in v1; the tests run on the build's toolchain either way. |
 | D12 | Real course material is never committed. `local-exercises/` is git-ignored for local runs. | Brief constraint; course content is not ours to publish. |
 
 ## Findings from step 1 (verified by running)
@@ -87,3 +90,12 @@ Run: `./gradlew pitest --init-script scripts/pitest.init.gradle` in a copy of `t
 - **A hanging test without any timeout** (plain build) is ended by the tool's time limit and reported as a problem for that variant; the other variants are still checked.
 - **Failure messages span several lines** in style A (`expected` and `actual` on their own lines), so the report joins them into one line.
 - **Limit:** a class with its own `@TestMethodOrder` keeps its order in the flakiness runs.
+
+
+## Findings: Gradle 8.12 with Java 17 (verified by running, 11.11.2026)
+
+- **The Ares build works with two edits**: wrapper to 8.12, toolchain to 17. All tests pass, the validator report is the same, Java 17 is read from the build.
+- **Gradle 8.12 does not start on JDK 25** ("Unsupported class file major version 69"); it starts on 17 and 21. Gradle 9.8.0 starts on 17 to 25.
+- **Killed test JVM, no XML**: with an endless loop under `@StrictTimeout`, Gradle 8.12 leaves `build/test-results/test` without any XML; 9.8.0 writes the tests up to the hanging one. With D32 both give the same report: `TIMEOUT` for the hanging test, `NOT CHECKED` for the rest. Artemis reads the same XML, so on 8.12 a student's endless loop probably shows as a failed build without per-test feedback (not tested on Artemis).
+- **Gradle closes the hanging test as SKIPPED** in its test events on both versions, so "started but never ended" does not identify it; "skipped and nothing started afterwards" does.
+- **PIT is unchanged** on `array-max` with 8.12 + 17: solution 11 mutants, 9 killed, 2 survived; `c-while-loop` 8 killed, 1 survived, 2 timed out. Same on a style B copy (2 `RUN_ERROR` instead of timed out).

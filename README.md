@@ -19,8 +19,8 @@ No API key or LLM is needed.
 
 ```
 exercises/
-  array-max/        Artemis Gradle build with Ares, plain JUnit 5 tests + reflection helpers (style A)
-  array-max-ares/   Artemis Gradle build with Ares, Ares API tests: test.json structure tests + @StrictTimeout (style B)
+  array-max/        Artemis Gradle build with Ares, plain JUnit 5 tests + reflection helpers (style A), Gradle 8.12 + Java 17
+  array-max-ares/   Artemis Gradle build with Ares, Ares API tests: test.json + @StrictTimeout (style B), Gradle 9.8 + Java 25
   array-max-plain/  Plain Gradle build without Ares, Java 17 (baseline for PIT)
 src/                The validator (Java 17, Gradle 9.8.0)
 DECISIONS.md        Design decisions and where they differ from the original plan
@@ -41,9 +41,11 @@ never commit real course material here (the `local-exercises/` folder is git-ign
 
 ## Requirements
 
-- JDK 17 to run the build. Gradle downloads itself through the wrapper.
-- The JDK version each exercise declares in its toolchain: **17 and 25** for the samples here.
+- JDK 17 to build and run the tool. Gradle downloads itself through the wrapper.
+- The JDK each exercise declares in its toolchain: **17 and 25** for the samples here.
   The exercises' builds mirror Artemis and do not auto-download JDKs, so these must be installed locally.
+- The exercise's Gradle must be able to start on the JDK the tool runs with. Gradle 8.12 (`array-max`) does not
+  start on JDK 25. Running the tool on JDK 17 works for every sample; otherwise pass `--java-home <JDK 17>`.
 
 ## Usage
 
@@ -53,7 +55,7 @@ build/install/exercise-test-validator/bin/exercise-test-validator validate exerc
 ```
 
 ```
-array-max  (Java 25, 7 tests, 3 alternatives, 10 random-order runs, base seed 100)
+array-max  (Java 17, 7 tests, 3 alternatives, 10 random-order runs, base seed 100)
 
   OK               maxOfNegativeValues()
   OK               maxOfSingleValue()
@@ -83,7 +85,8 @@ Timeouts are shown as `TIMEOUT`, not as `FAIL`. A build that produces no test re
 failed dependency download) is reported as a build problem, not as failing tests.
 
 Options: `--runs <n>` (random-order runs, default 10), `--seed <n>` (replay the same runs),
-`--timeout-minutes <n>` (limit per Gradle run, default 10), `--keep-work` (keep work folders and Gradle logs).
+`--timeout-minutes <n>` (limit per Gradle run, default 10), `--java-home <path>` (JDK to start the exercise's Gradle with),
+`--keep-work` (keep work folders and Gradle logs).
 Exit code: 0 no findings, 1 findings, 2 the solution could not be run.
 
 ## Tests of the tool itself
