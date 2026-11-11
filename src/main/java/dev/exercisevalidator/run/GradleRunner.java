@@ -35,14 +35,18 @@ public final class GradleRunner implements VariantRunner {
 
     private final Duration runTimeout;
     private final boolean keepWork;
+    private final Path javaHome;
 
     /**
      * @param runTimeout limit for one whole Gradle run; protects against a hanging test in a suite without timeouts
      * @param keepWork   keep the work folders (with the Gradle log) for debugging
+     * @param javaHome   JDK to start the exercise's Gradle with, or null for the tool's own environment.
+     *                   This is the JDK Gradle itself runs on; the tests still run on the build's toolchain.
      */
-    public GradleRunner(Duration runTimeout, boolean keepWork) {
+    public GradleRunner(Duration runTimeout, boolean keepWork, Path javaHome) {
         this.runTimeout = runTimeout;
         this.keepWork = keepWork;
+        this.javaHome = javaHome;
     }
 
     @Override
@@ -93,7 +97,11 @@ public final class GradleRunner implements VariantRunner {
             // which would also stop the user's other Gradle builds (and did stop this tool's own test run).
             command.addAll(List.of("--no-daemon", "--console=plain", "--init-script", INIT_SCRIPT));
             Path log = work.resolve(LOG_FILE);
-            Process process = new ProcessBuilder(command)
+            ProcessBuilder builder = new ProcessBuilder(command);
+            if (javaHome != null) {
+                builder.environment().put("JAVA_HOME", javaHome.toString());
+            }
+            Process process = builder
                     .directory(work.toFile())
                     .redirectErrorStream(true)
                     .redirectOutput(log.toFile()) // to a file: a full pipe nobody reads would block Gradle
@@ -110,13 +118,17 @@ public final class GradleRunner implements VariantRunner {
             String javaVersion = version.find() ? version.group(1).strip() : null;
             boolean jvmKilled = TEST_JVM_KILLED.matcher(output).find();
 
-            List<TestResult> tests = JUnitXmlReader.read(results, jvmKilled);
+            List<TestResult> tests = JUnitXmlReader.read(results);
+            if (jvmKilled) {
+                tests = KilledJvm.repair(tests, work.resolve(KilledJvm.EVENTS_FILE));
+            }
             if (tests.isEmpty()) {
                 // No XML at all: this is a build problem (compile error, HTTP 429 from Maven Central), not a test result.
                 return exit == 0
                         ? new RunResult(variant, seed, RunResult.Build.NO_TESTS, false, javaVersion, tests,
                                 "Gradle succeeded but wrote no test results.")
-                        : new RunResult(variant, seed, RunResult.Build.FAILED, jvmKilled, javaVersion, tests, whatWentWrong(output));
+                        : new RunResult(variant, seed, RunResult.Build.FAILED, jvmKilled, javaVersion, tests,
+                                whatWentWrong(output) + jdkHint(output));
             }
             return new RunResult(variant, seed, RunResult.Build.RAN, jvmKilled, javaVersion, tests, null);
         }
@@ -153,6 +165,20 @@ public final class GradleRunner implements VariantRunner {
         int end = output.indexOf("* Try:", start);
         String text = output.substring(start + "* What went wrong:".length(), end < 0 ? output.length() : end);
         return text.lines().map(String::stripTrailing).filter(l -> !l.isBlank()).limit(25).collect(Collectors.joining("\n"));
+    }
+
+    /**
+     * An old Gradle cannot read the class files of a newer JDK (Gradle 8.12 on JDK 25: "Unsupported class file
+     * major version 69"). The message says nothing about the cure, so add it.
+     */
+    static String jdkHint(String output) {
+        Matcher matcher = Pattern.compile("Unsupported class file major version (\\d+)").matcher(output);
+        if (!matcher.find()) {
+            return "";
+        }
+        int java = Integer.parseInt(matcher.group(1)) - 44; // class file version 61 = Java 17, 69 = Java 25
+        return "\nHint: the Gradle version of this exercise cannot run on JDK " + java + ". Start it on an older JDK with"
+                + " --java-home <path to JDK> (or set JAVA_HOME). The tests still run on the Java version the build declares.";
     }
 
     private static void copyTree(Path from, Path to, boolean skipBuildOutput) throws IOException {
