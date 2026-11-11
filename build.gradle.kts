@@ -28,5 +28,17 @@ application {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    // Fast unit tests only: no Gradle runs, no network.
+    useJUnitPlatform { excludeTags("integration") }
+}
+
+// Runs the validator end to end on real Gradle builds (the plain sample and a flaky fixture).
+// Slow, needs JDK 17 and network access for the first dependency download, so it is a separate task.
+tasks.register<Test>("integrationTest") {
+    description = "Runs the validator against real exercise builds."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("integration") }
+    shouldRunAfter(tasks.test)
 }

@@ -1,5 +1,6 @@
 // Rendered from the Artemis Java/Gradle test template (ls1intum/Artemis, develop, Nov 2026)
-// with static code analysis off and without the Artemis Maven Central mirror. Do not edit:
+// with static code analysis off and without the Artemis Maven Central mirror, then set to the course setup
+// of WS 2026/27: Java 17 toolchain and Gradle 8.12 (see gradle-wrapper.properties). Do not edit:
 // the validator must check the same build Artemis runs.
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.PathSensitive
@@ -14,7 +15,7 @@ plugins {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
+        languageVersion = JavaLanguageVersion.of(17)
     }
 }
 version = '1.0.0'
