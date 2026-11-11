@@ -1,0 +1,19 @@
+# Ares 2 security policy for the tests of this repository, referenced by @Policy in the test classes.
+# Docs: https://ls1intum.github.io/Ares2/instructor/policy-reference
+# Add every new test class below, otherwise Ares treats it like student code and blocks it.
+thisPolicyFileCompliesToThePolicyVersion: 1
+regardingTheSupervisedCode:
+  theFollowingProgrammingLanguageConfigurationIsUsed: JAVA_USING_GRADLE_ARCHUNIT_AND_ASPECTJ
+  theSupervisedCodeUsesTheFollowingPackage: "com.example.arraymax"
+  theMainClassInsideThisPackageIs: "ArrayMax"
+  theFollowingClassesAreTestClasses:
+    - "com.example.arraymax.ConstructorTest"
+    - "com.example.arraymax.MethodTest"
+    - "com.example.arraymax.ArrayMaxBehaviorTest"
+  theFollowingResourceAccessesArePermitted:
+    regardingFileSystemInteractions: [ ]
+    regardingNetworkConnections: [ ]
+    regardingCommandExecutions: [ ]
+    regardingThreadCreations: [ ]
+    regardingPackageImports: [ ]
+    regardingTimeouts: [ ]

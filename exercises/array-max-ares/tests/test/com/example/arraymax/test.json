@@ -1,0 +1,22 @@
+[
+  {
+    "class": {
+      "name": "ArrayMax",
+      "package": "com.example.arraymax"
+    },
+    "constructors": [
+      {
+        "modifiers": ["private"],
+        "parameters": []
+      }
+    ],
+    "methods": [
+      {
+        "name": "max",
+        "modifiers": ["public", "static"],
+        "parameters": ["int[]"],
+        "returnType": "int"
+      }
+    ]
+  }
+]
