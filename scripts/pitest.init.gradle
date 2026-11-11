@@ -1,0 +1,48 @@
+// Adds PIT mutation testing to an exercise's tests build without editing its build files (DECISIONS.md D3).
+// Usage: ./gradlew pitest --init-script <this file>
+initscript {
+    repositories {
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath 'info.solidsoft.gradle.pitest:gradle-pitest-plugin:1.19.0'
+    }
+}
+
+// 'pkg/Foo.java' becomes 'pkg.Foo*', which also covers nested classes.
+def classGlobs = { sourceSet ->
+    def globs = [] as Set
+    sourceSet.java.asFileTree.visit { details ->
+        if (!details.directory && details.name.endsWith('.java')) {
+            globs << details.relativePath.pathString.replaceAll(/\.java$/, '').replace('/', '.') + '*'
+        }
+    }
+    globs
+}
+
+allprojects {
+    // Init scripts cannot use plugin ids, so the plugin is applied by class.
+    pluginManager.withPlugin('java') {
+        apply plugin: info.solidsoft.gradle.pitest.PitestPlugin
+
+        pitest {
+            pitestVersion = '1.30.2'
+            junit5PluginVersion = '1.2.3'
+            // PIT refuses a catch-all filter, and the exercise's package is not known up front,
+            // so the class names are read from the source sets: main = code to mutate, test = tests to run.
+            targetClasses = provider { classGlobs(sourceSets.main) }
+            targetTests = provider { classGlobs(sourceSets.test) }
+            // STRONGER removes conditions instead of negating them. Only "null check removed" shows a weak
+            // null test; the negated check is killed by every test that passes a valid argument.
+            mutators = ['STRONGER']
+            // Run mutants in the same JVM setup as the graded tests (Ares agent, --add-opens).
+            // Args with a comma are dropped: PIT splits its JVM args on commas, and the only such arg is
+            // the JaCoCo coverage agent, which PIT replaces with its own coverage anyway.
+            jvmArgs = provider { tasks.named('test').get().allJvmArgs.findAll { !it.contains(',') } }
+            outputFormats = ['XML', 'HTML']
+            timestampedReports = false
+            threads = 1
+            verbose = providers.gradleProperty('pitVerbose').isPresent()
+        }
+    }
+}
