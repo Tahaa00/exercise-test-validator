@@ -13,13 +13,14 @@ import java.util.regex.Pattern;
 
 import dev.exercisevalidator.check.Verdict.Status;
 import dev.exercisevalidator.run.Exercise;
+import dev.exercisevalidator.run.MutationResult;
 import dev.exercisevalidator.run.RunResult;
 import dev.exercisevalidator.run.TestOutcome;
 import dev.exercisevalidator.run.TestResult;
 import dev.exercisevalidator.run.VariantRunner;
 
 /**
- * The three execution checks of version 1:
+ * The execution checks of version 1:
  * <ol>
  *   <li><b>Solution check:</b> every test must pass on the reference solution, run exactly like Artemis runs it.</li>
  *   <li><b>Flakiness check:</b> the same tests, N more times in random order, must give the same result.</li>
@@ -41,9 +42,12 @@ public final class Validator {
         this.progress = progress;
     }
 
-    public Report validate(Exercise exercise, int shuffledRuns, long baseSeed) throws IOException, InterruptedException {
+    /** @param mutation whether to run the mutation check (it is the slowest of the four) */
+    public Report validate(Exercise exercise, int shuffledRuns, long baseSeed, boolean mutation)
+            throws IOException, InterruptedException {
         List<String> problems = new ArrayList<>();
         RunResult solution;
+        MutationResult mutationResult = null;
         List<RunResult> shuffled = new ArrayList<>();
 
         try (VariantRunner.Session session = runner.open(exercise, "solution")) {
@@ -52,7 +56,7 @@ public final class Validator {
             if (!solution.ran()) {
                 // Without a solution run there is nothing to compare against, so stop here.
                 return new Report(exercise.name(), solution.javaVersion(), List.of(), 0, baseSeed, List.of(), List.of(),
-                        List.of(), "The suite could not be run on the solution (" + solution.build() + ").\n" + solution.problem());
+                        List.of(), null, "The suite could not be run on the solution (" + solution.build() + ").\n" + solution.problem());
             }
             // Seeds are drawn from a generator instead of counting baseSeed, baseSeed + 1, ...: java.util.Random,
             // which JUnit shuffles with, gives nearly the same first shuffle for neighbouring seeds (seen in testing:
@@ -68,6 +72,10 @@ public final class Validator {
                     break;
                 }
                 shuffled.add(run);
+            }
+            if (mutation) {
+                // Same work folder as the solution run, so PIT mutates exactly the classes that were just tested.
+                mutationResult = mutate(session, solution);
             }
         }
 
@@ -89,7 +97,18 @@ public final class Validator {
             verdicts.add(judge(test, solution, shuffled, alternatives));
         }
         return new Report(exercise.name(), solution.javaVersion(), alternatives.stream().map(RunResult::variant).toList(),
-                shuffled.size(), baseSeed, verdicts, problems, nameWarnings(solution), null);
+                shuffled.size(), baseSeed, verdicts, problems, nameWarnings(solution), mutationResult, null);
+    }
+
+    private MutationResult mutate(VariantRunner.Session session, RunResult solution) throws IOException, InterruptedException {
+        long notPassing = solution.tests().stream().filter(t -> t.outcome() != TestOutcome.PASS).count();
+        if (notPassing > 0) {
+            // PIT first runs the suite unchanged and stops if anything fails: a red test cannot tell a mutant from the original.
+            return MutationResult.skipped(notPassing + (notPassing == 1 ? " test does" : " tests do")
+                    + " not pass on the solution. PIT needs a green suite to start from.");
+        }
+        progress.accept("solution: mutation testing with PIT");
+        return session.mutate();
     }
 
     /**
