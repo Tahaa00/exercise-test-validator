@@ -1,14 +1,13 @@
 # exercise-test-validator
 
-> Work in progress. Build step 3 of 5: solution, flakiness, alternatives and mutation checks work.
-
 Checks whether the unit tests of a Java programming exercise are correct **before** they grade students.
 It runs the tests instead of judging them:
 
 - **False fail:** a correct solution fails a test (for example, a test that demands one exact error message).
   Found by running the tests against several different correct solutions.
 - **False pass:** a wrong solution passes the tests (for example, a test that only checks "something was thrown").
-  Found by mutation testing with [PIT](https://pitest.org).
+  Try a tutor-written wrong solution to see which tests catch it. Mutation testing with [PIT](https://pitest.org)
+  can also suggest gaps.
 - **Flaky tests:** a test that gives different results on repeated runs.
 
 It works on exercises laid out like an [Artemis](https://github.com/ls1intum/Artemis) programming exercise
@@ -33,6 +32,7 @@ problem-statement.md
 template/src/       Student starter code (should score 0%)
 solution/src/       Reference solution
 alternatives/*/src/ Other correct solutions, used to find over-specified tests
+buggy/*/src/        Optional tutor-written wrong solutions, ideally one mistake each
 tests/              The test repository: build files + test/ (the suite being checked)
 ```
 
@@ -51,11 +51,13 @@ never commit real course material here (the `local-exercises/` folder is git-ign
 
 ```bash
 ./gradlew installDist
-build/install/exercise-test-validator/bin/exercise-test-validator validate exercises/array-max
+build/install/exercise-test-validator/bin/exercise-test-validator validate exercises/array-max --seed 100
 ```
 
 ```
 array-max  (Java 17, 7 tests, 3 alternatives, 10 random-order runs, base seed 100)
+
+Tests on the reference, shuffled reruns and correct alternatives
 
   OK               maxOfNegativeValues()
   OK               maxOfSingleValue()
@@ -65,6 +67,23 @@ array-max  (Java 17, 7 tests, 3 alternatives, 10 random-order runs, base seed 10
   OK               maxOfMixedValues()
   OK               nullArrayIsRejected()
   OK               arrayIsNotModified()
+
+Tutor-written buggy variants
+
+  MISSED  buggy/missing-null-guard  (all 7 tests passed)
+    Requirement: Throw IllegalArgumentException when the input is null.
+    Witness input (tutor): max(null)
+    Expected (tutor): IllegalArgumentException
+    Actual (tutor): NullPointerException
+    Intended test: nullArrayIsRejected()  PASS
+
+  CAUGHT  buggy/sorts-input
+    Requirement: Return the maximum and leave the caller's array unchanged.
+    Witness input (tutor): max([2, 1])
+    Expected (tutor): Returns 2, array remains [2, 1].
+    Actual (tutor): Returns 2, array becomes [1, 2].
+    Intended test: arrayIsNotModified()  FAIL
+    Caught by: com.example.arraymax.ArrayMaxTest#arrayIsNotModified()  FAIL  max must not change the array it is given. Expected: [5, 1, 3] But was: [1, 3, 5]
 
 Mutation check (PIT on the solution, STRONGER mutators)
 
@@ -79,8 +98,8 @@ Mutation check (PIT on the solution, STRONGER mutators)
   may be missing or too weak, or the mutant is equivalent (same behaviour as the original).
   NOT COVERED: no test runs that line.
 
-Solution: 7/7 pass   Flaky: 0   Fail on an alternative: 1   Mutants not detected: 2
-Result: 1 finding
+Solution: 7/7 pass   Flaky: 0   Fail on an alternative: 1   Buggy variants missed: 1   Mutants not detected: 2
+Result: 2 findings
 ```
 
 For every variant the tool does what Artemis CI does: copy `tests/`, put the variant's code into `assignment/src`,
@@ -96,6 +115,21 @@ run the exercise's own `./gradlew clean test`, read the JUnit XML. The exercise'
 
 Timeouts are shown as `TIMEOUT`, not as `FAIL`. A build that produces no test results at all (compile error,
 failed dependency download) is reported as a build problem, not as failing tests.
+
+### Tutor-written buggy variants
+
+Put a wrong implementation in `buggy/<name>/src/`, using the same layout as `solution/src/`.
+Pick a single mistake and an input that demonstrates it. The validator runs the grading suite once on
+each variant. Read the named failures to see which tests reacted, including any outside the intended task.
+
+An optional `bug.properties` next to `src/` can describe the `requirement`, `input`, `expected` and
+`actual` behavior, and name the `intendedTest`. Those descriptions come from the tutor. The validator
+reads the intended test’s outcome from the grading run. See the [missing null guard](exercises/array-max/buggy/missing-null-guard/bug.properties)
+and [in-place sort](exercises/array-max/buggy/sorts-input/bug.properties) examples.
+
+- `MISSED` adds one finding for a known wrong variant that passed the complete suite.
+- `CAUGHT` identifies a test that passed reliably on the reference and failed on the variant.
+- `INCONCLUSIVE` records a run problem, such as a failed build, missing test or ambiguous result.
 
 ### Mutation check
 

@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.exercisevalidator.check.BuggyResult;
 import dev.exercisevalidator.check.Report;
 import dev.exercisevalidator.check.Validator;
 import dev.exercisevalidator.check.Verdict;
@@ -26,20 +27,78 @@ import dev.exercisevalidator.run.GradleRunner;
 import dev.exercisevalidator.run.Mutant;
 import dev.exercisevalidator.run.MutationResult;
 import dev.exercisevalidator.run.RunResult;
+import dev.exercisevalidator.run.TestOutcome;
 import dev.exercisevalidator.run.VariantRunner;
 
 /**
- * End to end: real Gradle runs of the plain sample, a flaky fixture and an Ares 1 fixture.
+ * End to end: real Gradle runs of the Java 17 samples, the buggy variants and the flakiness and Ares 1 fixtures.
  * Run with {@code ./gradlew integrationTest}.
- * The Ares samples are not run here because they need JDK 25; they are checked by hand until CI exists (step 4).
  */
 @Tag("integration")
 class ValidatorIntegrationTest {
 
     private static final Path PLAIN_SAMPLE = Path.of("exercises/array-max-plain");
+    private static final Path ARRAY_MAX = Path.of("exercises/array-max");
 
     private static Map<String, Status> statuses(Report report) {
         return report.verdicts().stream().collect(Collectors.toMap(Verdict::test, Verdict::status));
+    }
+
+    @Test
+    void arrayMaxSuiteAcceptsMissingNullGuardAndCatchesInputSort() throws Exception {
+        Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(10), false, null), step -> { });
+        Report report = validator.validate(Exercise.open(ARRAY_MAX), 0, 1, false);
+
+        assertNull(report.fatal(), report.fatal());
+        assertEquals(2, report.buggyVariants().size());
+        BuggyResult missed = report.buggyVariants().get(0);
+        assertEquals("buggy/missing-null-guard", missed.run().variant());
+        assertEquals(BuggyResult.Status.MISSED, missed.status(), missed.problem());
+        assertEquals(7, missed.run().tests().size());
+        assertEquals("PASS", missed.intendedOutcome());
+        BuggyResult caught = report.buggyVariants().get(1);
+        assertEquals("buggy/sorts-input", caught.run().variant());
+        assertEquals(BuggyResult.Status.CAUGHT, caught.status(), caught.problem());
+        assertEquals(List.of("com.example.arraymax.ArrayMaxTest#arrayIsNotModified()"), caught.catchingTests());
+        assertEquals("FAIL", caught.intendedOutcome());
+        assertEquals(2, report.findings());
+        assertEquals(1, report.exitCode());
+    }
+
+    @Test
+    void independentWitnessesReproduceTheTwoDocumentedBugs(@TempDir Path temp) throws Exception {
+        // Use the exercise's own build, with only the two witness tests in this private copy.
+        copy(ARRAY_MAX.resolve("solution"), temp.resolve("solution"));
+        copy(ARRAY_MAX.resolve("buggy"), temp.resolve("buggy"));
+        Path tests = temp.resolve("tests");
+        copy(Path.of("src/test/exercises/array-max-witness/test"), tests.resolve("test"));
+        Path original = ARRAY_MAX.resolve("tests");
+        copy(original.resolve("gradle"), tests.resolve("gradle"));
+        for (String file : List.of("gradlew", "gradlew.bat", "settings.gradle", "build.gradle", "SecurityPolicy.yaml")) {
+            Files.copy(original.resolve(file), tests.resolve(file));
+        }
+        Exercise exercise = Exercise.open(temp);
+        GradleRunner runner = new GradleRunner(Duration.ofMinutes(10), false, null);
+        for (String variant : List.of("solution", "buggy/missing-null-guard", "buggy/sorts-input")) {
+            try (VariantRunner.Session session = runner.open(exercise, variant)) {
+                RunResult run = session.run();
+                assertEquals(RunResult.Build.RAN, run.build(), run.problem());
+                assertEquals(2, run.tests().size());
+                if (variant.endsWith("missing-null-guard")) {
+                    assertEquals(TestOutcome.FAIL, run.outcomeOf("nullWitness()"));
+                    assertTrue(run.find("nullWitness()").orElseThrow().message().contains("NullPointerException"));
+                } else {
+                    assertEquals(TestOutcome.PASS, run.outcomeOf("nullWitness()"));
+                }
+                if (variant.endsWith("sorts-input")) {
+                    assertEquals(TestOutcome.FAIL, run.outcomeOf("inputWitness()"));
+                    // The return-value assertion passed and the side-effect assertion showed the mutated input.
+                    assertTrue(run.find("inputWitness()").orElseThrow().message().contains("expected: <[2, 1]> but was: <[1, 2]>"));
+                } else {
+                    assertEquals(TestOutcome.PASS, run.outcomeOf("inputWitness()"));
+                }
+            }
+        }
     }
 
     @Test
