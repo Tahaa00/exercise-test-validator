@@ -6,7 +6,7 @@ import java.util.Optional;
 /**
  * Result of one Gradle run of the suite against one variant.
  *
- * @param variant     "solution" or "alternatives/&lt;name&gt;"
+ * @param variant     source path relative to the exercise, for example "solution" or "buggy/missing-null-guard"
  * @param seed        random-order seed, or null for the declared order
  * @param build       whether Gradle got as far as producing test results
  * @param jvmKilled   the test JVM died mid-run, so tests after that point are missing from the XML
@@ -20,7 +20,7 @@ public record RunResult(String variant, Long seed, Build build, boolean jvmKille
     public enum Build {
         /** Test results exist. Tests may still have failed. */
         RAN,
-        /** No test results: compile error, dependency download failure, broken build file. */
+        /** The build failed outside ordinary test failures. Any available XML is retained as evidence. */
         FAILED,
         /** The whole Gradle run exceeded the tool's time limit and was stopped. */
         TIMED_OUT,

@@ -8,7 +8,7 @@ import java.util.stream.Stream;
 
 /**
  * An Artemis-shaped exercise folder: {@code solution/src}, {@code tests/} (a Gradle build with its wrapper)
- * and optionally {@code alternatives/<name>/src}.
+ * and optionally {@code alternatives/<name>/src} and {@code buggy/<name>/src}.
  */
 public record Exercise(Path root) {
 
@@ -36,13 +36,21 @@ public record Exercise(Path root) {
 
     /** Alternative solutions as variant names ("alternatives/a-streams"), sorted so reports are stable. */
     public List<String> alternatives() throws IOException {
-        Path dir = root.resolve("alternatives");
+        return variantsIn("alternatives");
+    }
+
+    public List<String> buggyVariants() throws IOException {
+        return variantsIn("buggy");
+    }
+
+    private List<String> variantsIn(String folder) throws IOException {
+        Path dir = root.resolve(folder);
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
         try (Stream<Path> children = Files.list(dir)) {
             return children.filter(p -> Files.isDirectory(p.resolve("src")))
-                    .map(p -> "alternatives/" + p.getFileName())
+                    .map(p -> folder + "/" + p.getFileName())
                     .sorted()
                     .toList();
         }

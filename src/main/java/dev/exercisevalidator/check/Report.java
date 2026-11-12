@@ -20,14 +20,23 @@ import dev.exercisevalidator.run.MutationResult;
  */
 public record Report(String exercise, String javaVersion, List<String> alternatives, int shuffledRuns, long baseSeed,
                      List<Verdict> verdicts, List<String> problems, List<String> warnings, MutationResult mutation,
-                     String fatal) {
+                     List<BuggyResult> buggyVariants, String fatal) {
+
+    public Report(String exercise, String javaVersion, List<String> alternatives, int shuffledRuns, long baseSeed,
+                  List<Verdict> verdicts, List<String> problems, List<String> warnings, MutationResult mutation, String fatal) {
+        this(exercise, javaVersion, alternatives, shuffledRuns, baseSeed, verdicts, problems, warnings, mutation, List.of(), fatal);
+    }
 
     public long count(Verdict.Status status) {
         return verdicts.stream().filter(v -> v.status() == status).count();
     }
 
+    public long missedBuggyVariants() {
+        return buggyVariants.stream().filter(b -> b.status() == BuggyResult.Status.MISSED).count();
+    }
+
     public long findings() {
-        return verdicts.size() - count(Verdict.Status.OK) + problems.size();
+        return verdicts.size() - count(Verdict.Status.OK) + problems.size() + missedBuggyVariants();
     }
 
     /** 0 = clean, 1 = findings, 2 = the solution could not be run. Lets CI fail on a bad suite. */

@@ -4,9 +4,23 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 class GradleRunnerTest {
+
+    @Test
+    void partialXmlCannotHideAnotherBuildFailure() {
+        var failed = new TestResult("a()", "p.A", TestOutcome.FAIL, "wrong");
+        var passed = new TestResult("a()", "p.A", TestOutcome.PASS, "");
+        String testFailure = "* What went wrong:\nExecution failed for task ':test'.\n> There were failing tests. See the report at: ...\n";
+        String otherFailure = "* What went wrong:\nExecution failed for task ':finish'.\n> finalizer failed\n";
+        assertTrue(GradleRunner.failedOnlyOnTests(testFailure, List.of(failed)));
+        assertFalse(GradleRunner.failedOnlyOnTests(testFailure, List.of(passed)));
+        assertFalse(GradleRunner.failedOnlyOnTests(testFailure + otherFailure, List.of(failed)));
+        assertFalse(GradleRunner.failedOnlyOnTests(otherFailure, List.of(failed)));
+    }
 
     @Test
     void extractsGradlesExplanationOfAFailedBuild() {

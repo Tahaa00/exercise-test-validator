@@ -12,6 +12,7 @@ import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 import dev.exercisevalidator.check.Verdict.Status;
+import dev.exercisevalidator.run.BugDescription;
 import dev.exercisevalidator.run.Exercise;
 import dev.exercisevalidator.run.MutationResult;
 import dev.exercisevalidator.run.RunResult;
@@ -25,8 +26,9 @@ import dev.exercisevalidator.run.VariantRunner;
  *   <li><b>Solution check:</b> every test must pass on the reference solution, run exactly like Artemis runs it.</li>
  *   <li><b>Flakiness check:</b> the same tests, N more times in random order, must give the same result.</li>
  *   <li><b>Alternatives check:</b> every test must also pass on the other correct solutions.</li>
+ *   <li><b>Buggy variants:</b> identify tutor-written mistakes that pass a complete grading run.</li>
  * </ol>
- * All three compare JUnit results of real runs. Nothing here inspects test source code.
+ * These checks compare JUnit results of real runs. Nothing here inspects test source code.
  */
 public final class Validator {
 
@@ -49,10 +51,12 @@ public final class Validator {
         RunResult solution;
         MutationResult mutationResult = null;
         List<RunResult> shuffled = new ArrayList<>();
+        List<RunResult> referenceRuns = new ArrayList<>();
 
         try (VariantRunner.Session session = runner.open(exercise, "solution")) {
             progress.accept("solution: clean test");
             solution = session.run();
+            referenceRuns.add(solution);
             if (!solution.ran()) {
                 // Without a solution run there is nothing to compare against, so stop here.
                 return new Report(exercise.name(), solution.javaVersion(), List.of(), 0, baseSeed, List.of(), List.of(),
@@ -66,6 +70,7 @@ public final class Validator {
                 long seed = seeds.nextLong() & Long.MAX_VALUE;
                 progress.accept("solution: random order " + (i + 1) + "/" + shuffledRuns + " (seed " + seed + ")");
                 RunResult run = session.rerunShuffled(seed);
+                referenceRuns.add(run);
                 if (!run.ran()) {
                     problems.add("Flakiness check stopped after " + i + " of " + shuffledRuns + " runs: seed " + seed
                             + " gave no test results (" + run.build() + "). " + firstLine(run.problem()));
@@ -96,8 +101,41 @@ public final class Validator {
         for (String test : allTestNames(solution, shuffled, alternatives)) {
             verdicts.add(judge(test, solution, shuffled, alternatives));
         }
+        List<String> warnings = nameWarnings(solution);
+        List<BuggyResult> buggy = checkBuggy(exercise, referenceRuns, alternatives, problems, warnings);
         return new Report(exercise.name(), solution.javaVersion(), alternatives.stream().map(RunResult::variant).toList(),
-                shuffled.size(), baseSeed, verdicts, problems, nameWarnings(solution), mutationResult, null);
+                shuffled.size(), baseSeed, verdicts, problems, warnings, mutationResult, buggy, null);
+    }
+
+    private List<BuggyResult> checkBuggy(Exercise exercise, List<RunResult> references, List<RunResult> alternatives,
+                                         List<String> problems, List<String> warnings) throws InterruptedException, IOException {
+        List<String> variants = exercise.buggyVariants();
+        if (variants.isEmpty()) {
+            return List.of();
+        }
+        BuggyCheck check = new BuggyCheck(references, alternatives);
+        List<BuggyResult> results = new ArrayList<>();
+        for (String variant : variants) {
+            progress.accept(variant + ": clean test");
+            RunResult run;
+            try (VariantRunner.Session session = runner.open(exercise, variant)) {
+                run = session.run();
+            } catch (IOException ex) {
+                run = new RunResult(variant, null, RunResult.Build.FAILED, false, null, List.of(), ex.getMessage());
+            }
+            BugDescription description = BugDescription.EMPTY;
+            try {
+                description = BugDescription.read(exercise.root().resolve(run.variant()));
+            } catch (IOException ex) {
+                warnings.add(run.variant() + ": could not read bug.properties. " + ex.getMessage());
+            }
+            BuggyResult result = check.judge(run, description);
+            results.add(result);
+            if (result.problem() != null) {
+                problems.add(run.variant() + ": " + result.problem());
+            }
+        }
+        return results;
     }
 
     private MutationResult mutate(VariantRunner.Session session, RunResult solution) throws IOException, InterruptedException {

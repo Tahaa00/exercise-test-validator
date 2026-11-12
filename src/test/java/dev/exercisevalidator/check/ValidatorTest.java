@@ -6,12 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import dev.exercisevalidator.check.Verdict.Status;
 import dev.exercisevalidator.run.Exercise;
@@ -171,6 +173,34 @@ class ValidatorTest {
 
     /** Exercise with no alternatives folder on disk; the scripted runner never touches the file system. */
     private static final Exercise EXERCISE = new Exercise(Path.of("build", "no-such-exercise").toAbsolutePath());
+
+    @Test
+    void buggyVariantsAreSortedAndCountedOnceWithIndependentTestEvidence(@TempDir Path temp) throws Exception {
+        ScriptedRunner runner = new ScriptedRunner();
+        TestResult passed = test("a()", TestOutcome.PASS);
+        TestResult failed = test("a()", TestOutcome.FAIL);
+        runner.script.put("solution", List.of(solution(passed)));
+        for (String name : List.of("missed", "broken", "caught")) {
+            Files.createDirectories(temp.resolve("buggy").resolve(name).resolve("src"));
+        }
+        runner.script.put("buggy/missed", List.of(run("buggy/missed", null, false, passed)));
+        runner.script.put("buggy/broken", List.of(new RunResult("buggy/broken", null, Build.FAILED, false, null, List.of(), "compile error")));
+        runner.script.put("buggy/caught", List.of(run("buggy/caught", null, false, failed)));
+        Files.writeString(temp.resolve("buggy/caught/bug.properties"), "intendedTest=com.example.SomeTest#a()\n");
+
+        Report report = new Validator(runner, step -> { }).validate(new Exercise(temp), 0, 1, false);
+
+        assertEquals(List.of(BuggyResult.Status.INCONCLUSIVE, BuggyResult.Status.CAUGHT, BuggyResult.Status.MISSED),
+                report.buggyVariants().stream().map(BuggyResult::status).toList());
+        assertEquals("FAIL", report.buggyVariants().get(1).intendedOutcome());
+        assertEquals(1, report.count(Status.OK));
+        assertEquals(1, report.problems().size());
+        assertEquals(2, report.findings());
+        assertEquals(1, report.exitCode());
+        String output = dev.exercisevalidator.report.ConsoleReport.render(report);
+        assertTrue(output.contains("Caught by: com.example.SomeTest#a()  FAIL  boom"), output);
+        assertTrue(output.contains("MISSED  buggy/missed"), output);
+    }
 
     @Test
     void solutionBuildFailureStopsEverythingWithExitCode2() throws Exception {

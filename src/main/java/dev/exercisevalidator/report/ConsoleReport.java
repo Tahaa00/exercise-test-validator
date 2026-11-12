@@ -8,11 +8,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import dev.exercisevalidator.check.BuggyResult;
 import dev.exercisevalidator.check.Report;
 import dev.exercisevalidator.check.Verdict;
 import dev.exercisevalidator.check.Verdict.Status;
+import dev.exercisevalidator.run.BugDescription;
 import dev.exercisevalidator.run.Mutant;
 import dev.exercisevalidator.run.MutationResult;
+import dev.exercisevalidator.run.TestOutcome;
+import dev.exercisevalidator.run.TestResult;
 
 /** Renders a {@link Report} as plain text: one line per test, evidence indented below it. */
 public final class ConsoleReport {
@@ -38,6 +42,9 @@ public final class ConsoleReport {
                 .append(", ").append(report.shuffledRuns()).append(" random-order runs, base seed ").append(report.baseSeed())
                 .append(")\n\n");
 
+        if (!report.buggyVariants().isEmpty()) {
+            out.append("Tests on the reference, shuffled reruns and correct alternatives\n\n");
+        }
         for (Verdict verdict : report.verdicts()) {
             out.append("  ").append(pad(verdict.status().label())).append(verdict.test()).append('\n');
             for (String line : verdict.evidence()) {
@@ -51,6 +58,9 @@ public final class ConsoleReport {
             out.append('\n');
         }
 
+        if (!report.buggyVariants().isEmpty()) {
+            renderBuggy(report.buggyVariants(), out);
+        }
         MutationResult mutation = report.mutation();
         if (mutation != null) {
             renderMutation(mutation, out);
@@ -63,6 +73,9 @@ public final class ConsoleReport {
         if (report.count(Status.NOT_CHECKED) > 0) {
             out.append("   Not checked: ").append(report.count(Status.NOT_CHECKED));
         }
+        if (!report.buggyVariants().isEmpty()) {
+            out.append("   Buggy variants missed: ").append(report.missedBuggyVariants());
+        }
         if (mutation != null && mutation.state() == MutationResult.State.RAN) {
             out.append("   Mutants not detected: ").append(mutation.undetected().size());
         }
@@ -70,6 +83,38 @@ public final class ConsoleReport {
         long findings = report.findings();
         out.append("Result: ").append(findings == 0 ? "no findings" : findings + (findings == 1 ? " finding" : " findings")).append('\n');
         return out.toString();
+    }
+
+    private static void renderBuggy(List<BuggyResult> results, StringBuilder out) {
+        out.append("Tutor-written buggy variants\n\n");
+        for (BuggyResult result : results) {
+            out.append("  ").append(result.status()).append("  ").append(result.run().variant());
+            if (result.status() == BuggyResult.Status.MISSED) {
+                out.append("  (all ").append(result.run().tests().size()).append(" tests passed)");
+            }
+            out.append('\n');
+            BugDescription description = result.description();
+            detail(out, "Requirement", description.requirement());
+            detail(out, "Witness input (tutor)", description.input());
+            detail(out, "Expected (tutor)", description.expected());
+            detail(out, "Actual (tutor)", description.actual());
+            if (!description.intendedTest().isEmpty()) {
+                detail(out, "Intended test", description.intendedTest() + "  " + result.intendedOutcome());
+            }
+            for (TestResult test : result.run().tests()) {
+                if (test.outcome() != TestOutcome.PASS) {
+                    String label = result.catchingTests().contains(test.qualifiedName()) ? "Caught by" : "Observed";
+                    detail(out, label, test.qualifiedName() + "  " + test.outcome() + "  " + test.message());
+                }
+            }
+            out.append('\n');
+        }
+    }
+
+    private static void detail(StringBuilder out, String label, String value) {
+        if (!value.isEmpty()) {
+            out.append("    ").append(label).append(": ").append(value).append('\n');
+        }
     }
 
     private static void renderMutation(MutationResult mutation, StringBuilder out) {
