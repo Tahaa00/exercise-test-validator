@@ -1,9 +1,11 @@
 package dev.exercisevalidator.run;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,11 +38,20 @@ final class KilledJvm {
 
         static Event parse(String line) {
             String[] parts = line.split("\t", -1);
-            if (parts.length < 3) {
+            boolean end = parts[0].equals("END") && parts.length == 5;
+            boolean start = parts[0].equals("START") && parts.length == 3;
+            if (!start && !end) {
                 return null;
             }
-            boolean end = parts[0].equals("END");
-            return new Event(end, parts[1], parts[2], parts.length > 3 ? parts[3] : "", parts.length > 4 ? parts[4] : "");
+            try {
+                return new Event(end, decode(parts[1]), decode(parts[2]), end ? parts[3] : "", end ? decode(parts[4]) : "");
+            } catch (IllegalArgumentException e) {
+                return null; // An abruptly terminated write can leave a truncated Base64 field.
+            }
+        }
+
+        private static String decode(String field) {
+            return new String(Base64.getDecoder().decode(field), StandardCharsets.UTF_8);
         }
 
         String key() {
@@ -50,21 +61,26 @@ final class KilledJvm {
 
     static List<TestResult> repair(List<TestResult> fromXml, Path eventsFile) throws IOException {
         List<Event> events = Files.isRegularFile(eventsFile)
-                ? Files.readAllLines(eventsFile).stream().map(Event::parse).filter(e -> e != null).toList()
+                ? Files.readAllLines(eventsFile).stream().map(Event::parse).toList()
                 : List.of();
         if (events.isEmpty()) {
-            // No record (should not happen with our init script): fall back to what Gradle 9 writes.
-            return fromXml.stream()
-                    .map(t -> t.outcome() == TestOutcome.SKIPPED ? new TestResult(t.name(), t.className(), TestOutcome.TIMEOUT, HUNG) : t)
-                    .toList();
+            // The XML alone cannot distinguish a disabled test from the one interrupted by the JVM exit.
+            return fromXml;
         }
 
         Map<String, Event> started = new LinkedHashMap<>();
         Map<String, Event> ended = new LinkedHashMap<>();
+        Map<String, Integer> startCounts = new LinkedHashMap<>();
         Set<String> skippedSinceLastStart = new HashSet<>();
+        boolean damaged = false;
         for (Event event : events) {
+            if (event == null) {
+                damaged = true;
+                continue;
+            }
             (event.end() ? ended : started).put(event.key(), event);
             if (!event.end()) {
+                startCounts.merge(event.key(), 1, Integer::sum);
                 skippedSinceLastStart.clear();
             } else if (event.resultType().equals("SKIPPED")) {
                 skippedSinceLastStart.add(event.key());
@@ -72,22 +88,40 @@ final class KilledJvm {
         }
         Set<String> hung = started.keySet().stream().filter(k -> !ended.containsKey(k)).collect(Collectors.toCollection(HashSet::new));
         hung.addAll(skippedSinceLastStart);
+        boolean uniqueInterruption = !damaged && hung.size() == 1;
 
         List<TestResult> repaired = new ArrayList<>();
-        Set<String> inXml = fromXml.stream().map(t -> t.className() + "\t" + t.name()).collect(Collectors.toSet());
+        Map<String, Integer> xmlCounts = new LinkedHashMap<>();
         for (TestResult test : fromXml) {
-            boolean isHung = hung.contains(test.className() + "\t" + test.name());
-            repaired.add(isHung ? new TestResult(test.name(), test.className(), TestOutcome.TIMEOUT, HUNG) : test);
+            String key = test.className() + "\t" + test.name();
+            xmlCounts.merge(key, 1, Integer::sum);
+            boolean isHung = uniqueInterruption && hung.contains(key) && startCounts.getOrDefault(key, 0) == 1;
+            repaired.add(isHung ? new TestResult(test.name(), test.className(), TestOutcome.TIMEOUT, HUNG, true) : test);
         }
         // Tests the XML does not have (on Gradle 8: all of them), in the order they started.
         for (Event start : started.values()) {
-            if (inXml.contains(start.key())) {
+            int starts = startCounts.get(start.key());
+            int xmlRows = xmlCounts.getOrDefault(start.key(), 0);
+            if (starts > 1) {
+                // Repeated display names have no occurrence identifier to match XML rows to end events.
+                for (int i = xmlRows; i < starts; i++) {
+                    repaired.add(new TestResult(start.name(), start.className(), TestOutcome.AMBIGUOUS,
+                            starts + " starts with this identity in the Gradle event record"));
+                }
+                continue;
+            }
+            if (xmlRows > 0) {
                 continue;
             }
             Event end = ended.get(start.key());
-            repaired.add(end == null || hung.contains(start.key())
-                    ? new TestResult(start.name(), start.className(), TestOutcome.TIMEOUT, HUNG)
-                    : fromEvent(end));
+            if (uniqueInterruption && hung.contains(start.key())) {
+                repaired.add(new TestResult(start.name(), start.className(), TestOutcome.TIMEOUT, HUNG, true));
+            } else if (end == null) {
+                repaired.add(new TestResult(start.name(), start.className(), TestOutcome.AMBIGUOUS,
+                        "test started without a final result before the JVM exit"));
+            } else {
+                repaired.add(fromEvent(end));
+            }
         }
         return repaired;
     }

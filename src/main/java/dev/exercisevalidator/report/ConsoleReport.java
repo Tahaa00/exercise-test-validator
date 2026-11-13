@@ -22,6 +22,7 @@ import dev.exercisevalidator.run.TestResult;
 public final class ConsoleReport {
 
     private static final int LABEL_WIDTH = 17; // "OVER-SPECIFIED?" plus two spaces
+    private static final Set<String> SUMMARY_STATUSES = Set.of("KILLED", "TIMED_OUT", "RUN_ERROR", "SURVIVED", "NO_COVERAGE");
 
     private ConsoleReport() {
     }
@@ -31,7 +32,10 @@ public final class ConsoleReport {
         if (report.fatal() != null) {
             out.append(report.exercise()).append('\n').append('\n');
             out.append("  BUILD FAILED  ").append(report.fatal().replace("\n", "\n    ")).append('\n');
-            out.append('\n').append("Result: no checks were run").append('\n');
+            renderVerdicts(report, out);
+            report.problems().forEach(p -> out.append("  PROBLEM  ").append(p).append('\n'));
+            report.warnings().forEach(w -> out.append("  WARNING  ").append(w).append('\n'));
+            out.append('\n').append("Result: incomplete reference run").append('\n');
             return out.toString();
         }
 
@@ -45,12 +49,7 @@ public final class ConsoleReport {
         if (!report.buggyVariants().isEmpty()) {
             out.append("Tests on the reference, shuffled reruns and correct alternatives\n\n");
         }
-        for (Verdict verdict : report.verdicts()) {
-            out.append("  ").append(pad(verdict.status().label())).append(verdict.test()).append('\n');
-            for (String line : verdict.evidence()) {
-                out.append("  ").append(pad("")).append("  ").append(line).append('\n');
-            }
-        }
+        renderVerdicts(report, out);
         out.append('\n');
         report.problems().forEach(p -> out.append("  PROBLEM  ").append(p).append('\n'));
         report.warnings().forEach(w -> out.append("  WARNING  ").append(w).append('\n'));
@@ -67,8 +66,10 @@ public final class ConsoleReport {
         }
 
         long total = report.verdicts().size();
-        out.append("Solution: ").append(total - report.count(Status.REJECTED)).append('/').append(total).append(" pass")
-                .append("   Flaky: ").append(report.count(Status.FLAKY))
+        if (report.referencePasses() >= 0) {
+            out.append("Solution: ").append(report.referencePasses()).append('/').append(total).append(" pass   ");
+        }
+        out.append("Flaky: ").append(report.count(Status.FLAKY))
                 .append("   Fail on an alternative: ").append(report.count(Status.OVER_SPECIFIED));
         if (report.count(Status.NOT_CHECKED) > 0) {
             out.append("   Not checked: ").append(report.count(Status.NOT_CHECKED));
@@ -81,8 +82,24 @@ public final class ConsoleReport {
         }
         out.append('\n');
         long findings = report.findings();
-        out.append("Result: ").append(findings == 0 ? "no findings" : findings + (findings == 1 ? " finding" : " findings")).append('\n');
+        out.append("Result: ");
+        String findingCount = findings == 0 ? "no findings" : findings + (findings == 1 ? " finding" : " findings");
+        if (report.exitCode() == 3) {
+            out.append("incomplete PIT run (").append(findingCount).append(" from other checks)");
+        } else {
+            out.append(findingCount);
+        }
+        out.append('\n');
         return out.toString();
+    }
+
+    private static void renderVerdicts(Report report, StringBuilder out) {
+        for (Verdict verdict : report.verdicts()) {
+            out.append("  ").append(pad(verdict.status().label())).append(verdict.test()).append('\n');
+            for (String line : verdict.evidence()) {
+                out.append("  ").append(pad("")).append("  ").append(line).append('\n');
+            }
+        }
     }
 
     private static void renderBuggy(List<BuggyResult> results, StringBuilder out) {
@@ -126,18 +143,20 @@ public final class ConsoleReport {
         }
         List<Mutant> mutants = mutation.counted();
         List<Mutant> undetected = mutation.undetected();
-        long other = undetected.stream().filter(m -> !m.survived() && !m.notCovered()).count();
-        // Counts only, no percentage: an equivalent mutant can never be killed, so "82%" would look like a defect.
-        out.append("  ").append(mutants.size()).append(mutants.size() == 1 ? " mutant: " : " mutants: ")
-                .append(mutation.detected()).append(" detected");
-        if (mutation.detectedWithoutKill() > 0) {
-            out.append(" (").append(mutation.detectedWithoutKill()).append(" of them by timeout or crash)");
-        }
-        out.append(", ").append(undetected.stream().filter(Mutant::survived).count()).append(" survived")
-                .append(", ").append(undetected.stream().filter(Mutant::notCovered).count()).append(" not covered");
-        if (other > 0) {
-            out.append(", ").append(other).append(" other");
-        }
+        Map<String, Long> counts = mutants.stream().collect(Collectors.groupingBy(Mutant::status,
+                java.util.TreeMap::new, Collectors.counting()));
+        long runErrors = counts.getOrDefault("RUN_ERROR", 0L);
+        out.append("  ").append(mutants.size()).append(" mutants: ")
+                .append(counts.getOrDefault("KILLED", 0L)).append(" killed, ")
+                .append(counts.getOrDefault("TIMED_OUT", 0L)).append(" timed out, ")
+                .append(runErrors).append(runErrors == 1 ? " run error, " : " run errors, ")
+                .append(counts.getOrDefault("SURVIVED", 0L)).append(" survived, ")
+                .append(counts.getOrDefault("NO_COVERAGE", 0L)).append(" not covered");
+        counts.forEach((status, count) -> {
+            if (!SUMMARY_STATUSES.contains(status)) {
+                out.append(", ").append(count).append(' ').append(status);
+            }
+        });
         out.append("\n\n");
 
         List<Row> rows = rows(mutants, undetected);

@@ -100,6 +100,7 @@ public final class GradleRunner implements VariantRunner {
         private RunResult gradle(Long seed, String... tasks) throws IOException, InterruptedException {
             Path results = work.resolve("build/test-results/test");
             deleteTree(results); // never read XML left over from a previous run
+            Files.deleteIfExists(work.resolve(KilledJvm.EVENTS_FILE));
 
             Path log = work.resolve(LOG_FILE);
             List<String> arguments = new ArrayList<>(List.of(tasks));
@@ -149,8 +150,11 @@ public final class GradleRunner implements VariantRunner {
             }
             String output = Files.readString(log);
             Path xml = report.resolve("mutations.xml");
-            if (exit != 0 || !Files.isRegularFile(xml)) {
-                return MutationResult.failed(pitProblem(output));
+            if (exit != 0) {
+                return MutationResult.failed("PIT build exited with code " + exit + ". " + pitProblem(output));
+            }
+            if (!Files.isRegularFile(xml)) {
+                return MutationResult.failed("The PIT task finished but produced no build/reports/pitest/mutations.xml.");
             }
             String remark = output.contains(ARES1_TRUSTED) ? "This build uses Ares 1, whose security manager blocks PIT. "
                     + "For this PIT run only, Ares was told to trust the solution's classes and PIT." : null;

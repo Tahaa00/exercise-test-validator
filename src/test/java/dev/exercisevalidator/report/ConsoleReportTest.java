@@ -20,12 +20,12 @@ class ConsoleReportTest {
         Report report = new Report("array-max", "25", List.of("alternatives/b"), 10, 7,
                 List.of(new Verdict("good()", Status.OK, List.of()),
                         new Verdict("strict()", Status.OVER_SPECIFIED, List.of("FAIL (wrong message) on alternatives/b"))),
-                List.of(), List.of(), null, null);
+                List.of(), List.of(), null, List.of(), null, 2);
 
         assertEquals("""
                 array-max  (Java 25, 2 tests, 1 alternatives, 10 random-order runs, base seed 7)
 
-                  OK               good()
+                  PASSED CHECKS    good()
                   OVER-SPECIFIED?  strict()
                                      FAIL (wrong message) on alternatives/b
 
@@ -46,7 +46,7 @@ class ConsoleReportTest {
 
     private static Report withMutation(MutationResult mutation) {
         return new Report("array-max", "17", List.of(), 0, 7, List.of(new Verdict("good()", Status.OK, List.of())),
-                List.of(), List.of(), mutation, null);
+                List.of(), List.of(), mutation, List.of(), null, 1);
     }
 
     @Test
@@ -54,17 +54,18 @@ class ConsoleReportTest {
         Report report = withMutation(MutationResult.ran(List.of(
                 new Mutant("ArrayMax.java", "p.ArrayMax", "max", "([I)I", 9, "removed conditional", "SURVIVED", false, "if (values == null) {"),
                 new Mutant("ArrayMax.java", "p.ArrayMax", "max", "([I)I", 12, "negated conditional", "KILLED", true, "x"),
+                new Mutant("ArrayMax.java", "p.ArrayMax", "max", "([I)I", 14, "negated condition", "TIMED_OUT", true, "x"),
                 new Mutant("ArrayMax.java", "p.ArrayMax", "max", "([I)I", 13, "changed conditional boundary", "RUN_ERROR", true, "x"),
                 new Mutant("ArrayMax.java", "p.ArrayMax", "unused", "()I", 30, "replaced int return with 0", "NO_COVERAGE", false, ""))));
 
         assertEquals("""
                 array-max  (Java 17, 1 tests, 0 alternatives, 0 random-order runs, base seed 7)
 
-                  OK               good()
+                  PASSED CHECKS    good()
 
                 Mutation check (PIT on the solution, STRONGER mutators)
 
-                  4 mutants: 2 detected (1 of them by timeout or crash), 1 survived, 1 not covered
+                  5 mutants: 1 killed, 1 timed out, 1 run error, 1 survived, 1 not covered
 
                   SURVIVED     ArrayMax.java:9   max()     removed conditional
                                  if (values == null) {
@@ -96,7 +97,7 @@ class ConsoleReportTest {
         String text = ConsoleReport.render(report);
 
         assertTrue(text.contains("""
-                  5 mutants: 1 detected, 1 survived, 3 not covered
+                  5 mutants: 1 killed, 0 timed out, 0 run errors, 1 survived, 3 not covered
 
                   SURVIVED     Search.java:6      linear()  changed conditional boundary
                                  if (a > b) {
@@ -129,6 +130,7 @@ class ConsoleReportTest {
 
         assertTrue(skipped.contains("  Skipped: 1 test does not pass on the solution.\n"), skipped);
         assertTrue(failed.contains("  Could not run: Could not resolve org.pitest:pitest\n"), failed);
-        assertTrue(failed.contains("Result: no findings"), "a PIT failure does not turn a good suite red");
+        assertTrue(failed.contains("Result: incomplete PIT run"), failed);
+        assertEquals(3, withMutation(MutationResult.failed("no report")).exitCode());
     }
 }

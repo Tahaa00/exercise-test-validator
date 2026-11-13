@@ -10,5 +10,7 @@ public enum TestOutcome {
     /** Reported as skipped while the test JVM was alive, for example {@code @Disabled}. */
     SKIPPED,
     /** Known from other runs but absent from this run's XML, typically because the test JVM was killed earlier. */
-    NOT_RUN
+    NOT_RUN,
+    /** The XML identity is incomplete or repeats within the same run. */
+    AMBIGUOUS
 }

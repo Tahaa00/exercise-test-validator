@@ -32,12 +32,38 @@ public record RunResult(String variant, Long seed, Build build, boolean jvmKille
         return build == Build.RAN;
     }
 
-    public Optional<TestResult> find(String testName) {
-        return tests.stream().filter(t -> t.name().equals(testName)).findFirst();
+    /** An unexplained executor death leaves the grading run incomplete, even if its surviving rows passed. */
+    public boolean unattributedJvmExit() {
+        if (!jvmKilled) {
+            return false;
+        }
+        List<TestResult> interrupted = tests.stream().filter(TestResult::interruptedByJvmExit).toList();
+        return interrupted.size() != 1 || outcomeOf(interrupted.get(0).qualifiedName()) != TestOutcome.TIMEOUT;
     }
 
-    /** Outcome of a test in this run; a test that is not in the XML counts as NOT_RUN, never as passed. */
-    public TestOutcome outcomeOf(String testName) {
-        return find(testName).map(TestResult::outcome).orElse(TestOutcome.NOT_RUN);
+    public List<TestResult> matches(String qualifiedName) {
+        return tests.stream().filter(t -> t.qualifiedName().equals(qualifiedName)).toList();
+    }
+
+    /** Raw XML evidence is attributable only when exactly one row matches the qualified identity. */
+    public Optional<TestResult> find(String qualifiedName) {
+        List<TestResult> rows = matches(qualifiedName);
+        return rows.size() == 1 ? Optional.of(rows.get(0)) : Optional.empty();
+    }
+
+    /** Only a unique, fully identified row in a grading run can supply an attributable outcome. */
+    public TestOutcome outcomeOf(String qualifiedName) {
+        return outcomeOf(matches(qualifiedName));
+    }
+
+    public TestOutcome outcomeOf(List<TestResult> rows) {
+        if (!ran() || rows.isEmpty()) {
+            return TestOutcome.NOT_RUN;
+        }
+        TestResult row = rows.get(0);
+        if (rows.size() > 1 || row.className().isBlank() || row.name().isBlank()) {
+            return TestOutcome.AMBIGUOUS;
+        }
+        return row.outcome();
     }
 }

@@ -35,7 +35,11 @@ public final class PitXmlReader {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            nodes = factory.newDocumentBuilder().parse(xml.toFile()).getElementsByTagName("mutation");
+            Element root = factory.newDocumentBuilder().parse(xml.toFile()).getDocumentElement();
+            if (!root.getTagName().equals("mutations")) {
+                throw new IOException("Unexpected root in PIT report: " + root.getTagName());
+            }
+            nodes = root.getElementsByTagName("mutation");
         } catch (ParserConfigurationException | SAXException e) {
             throw new IOException("Cannot read PIT report " + xml + ": " + e.getMessage(), e);
         }
@@ -45,12 +49,21 @@ public final class PitXmlReader {
             Element element = (Element) nodes.item(i);
             String sourceFile = text(element, "sourceFile");
             String className = text(element, "mutatedClass");
-            int line = Integer.parseInt(text(element, "lineNumber"));
+            int line;
+            try {
+                line = Integer.parseInt(text(element, "lineNumber"));
+            } catch (NumberFormatException ex) {
+                throw new IOException("Invalid line number in PIT report for " + className, ex);
+            }
+            String detected = element.getAttribute("detected");
+            if (element.getAttribute("status").isBlank() || !(detected.equals("true") || detected.equals("false"))) {
+                throw new IOException("Missing or invalid mutation outcome in PIT report for " + className);
+            }
             List<String> lines = sources.computeIfAbsent(className + "/" + sourceFile,
                     key -> sourceLines(sourceRoot, className, sourceFile));
             mutants.add(new Mutant(sourceFile, className, text(element, "mutatedMethod"),
                     text(element, "methodDescription"), line, text(element, "description"),
-                    element.getAttribute("status"), Boolean.parseBoolean(element.getAttribute("detected")),
+                    element.getAttribute("status"), Boolean.parseBoolean(detected),
                     line >= 1 && line <= lines.size() ? lines.get(line - 1).strip() : ""));
         }
         // PIT's order follows its own run order; by class and line is what a reader expects.

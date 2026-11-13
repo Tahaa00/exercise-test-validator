@@ -34,7 +34,6 @@ public final class Validator {
 
     /** {@code name()} is what JUnit writes for a plain test method, {@code name[Class]} what Ares' structural tests write. */
     private static final Pattern USUAL_TEST_NAME = Pattern.compile("[A-Za-z_$][\\w$]*(\\(\\)|\\[[\\w$.]+])");
-    private static final int MAX_EVIDENCE_PER_KIND = 3;
 
     private final VariantRunner runner;
     private final Consumer<String> progress;
@@ -47,82 +46,132 @@ public final class Validator {
     /** @param mutation whether to run the mutation check (it is the slowest of the four) */
     public Report validate(Exercise exercise, int shuffledRuns, long baseSeed, boolean mutation)
             throws IOException, InterruptedException {
+        return validate(exercise, shuffledRuns, baseSeed, mutation, List.of());
+    }
+
+    /** Expected IDs come from an independent inventory, in the form {@code class#XML invocation name}. */
+    public Report validate(Exercise exercise, int shuffledRuns, long baseSeed, boolean mutation,
+                           List<String> expectedTests) throws IOException, InterruptedException {
         List<String> problems = new ArrayList<>();
-        RunResult solution;
+        List<String> warnings = new ArrayList<>();
+        if (expectedTests.isEmpty()) {
+            warnings.add("Test inventory uses observed executions only. Tests absent from every run require an independent expected list.");
+        }
+        Set<String> known = new LinkedHashSet<>(expectedTests);
+        RunResult solution = null;
         MutationResult mutationResult = null;
         List<RunResult> shuffled = new ArrayList<>();
-        List<RunResult> referenceRuns = new ArrayList<>();
 
         try (VariantRunner.Session session = runner.open(exercise, "solution")) {
             progress.accept("solution: clean test");
             solution = session.run();
-            referenceRuns.add(solution);
-            if (!solution.ran()) {
-                // Without a solution run there is nothing to compare against, so stop here.
-                return new Report(exercise.name(), solution.javaVersion(), List.of(), 0, baseSeed, List.of(), List.of(),
-                        List.of(), null, "The suite could not be run on the solution (" + solution.build() + ").\n" + solution.problem());
-            }
-            // Seeds are drawn from a generator instead of counting baseSeed, baseSeed + 1, ...: java.util.Random,
-            // which JUnit shuffles with, gives nearly the same first shuffle for neighbouring seeds (seen in testing:
-            // ten consecutive seeds produced one order). The same base seed still reproduces the same ten runs.
-            SplittableRandom seeds = new SplittableRandom(baseSeed);
-            for (int i = 0; i < shuffledRuns; i++) {
-                long seed = seeds.nextLong() & Long.MAX_VALUE;
-                progress.accept("solution: random order " + (i + 1) + "/" + shuffledRuns + " (seed " + seed + ")");
-                RunResult run = session.rerunShuffled(seed);
-                referenceRuns.add(run);
-                if (!run.ran()) {
-                    problems.add("Flakiness check stopped after " + i + " of " + shuffledRuns + " runs: seed " + seed
-                            + " gave no test results (" + run.build() + "). " + firstLine(run.problem()));
-                    break;
+            accountForRun(known, problems, solution);
+            if (solution.ran()) {
+                // Non-neighbouring seeds avoid repeatedly drawing the same first JUnit shuffle.
+                SplittableRandom seeds = new SplittableRandom(baseSeed);
+                for (int i = 0; i < shuffledRuns; i++) {
+                    long seed = seeds.nextLong() & Long.MAX_VALUE;
+                    progress.accept("solution: random order " + (i + 1) + "/" + shuffledRuns + " (seed " + seed + ")");
+                    RunResult run;
+                    try {
+                        run = session.rerunShuffled(seed);
+                    } catch (IOException ex) {
+                        run = failedRun("solution", seed, ex);
+                    }
+                    shuffled.add(run);
+                    accountForRun(known, problems, run);
+                    if (!run.ran()) {
+                        problems.add("Flakiness check stopped after " + i + " of " + shuffledRuns + " runs: seed " + seed
+                                + " had an incomplete build (" + run.build() + "). " + firstLine(run.problem()));
+                        break;
+                    }
                 }
-                shuffled.add(run);
+                if (mutation) {
+                    mutationResult = mutate(session, solution, known);
+                }
             }
-            if (mutation) {
-                // Same work folder as the solution run, so PIT mutates exactly the classes that were just tested.
-                mutationResult = mutate(session, solution);
+        } catch (IOException ex) {
+            if (solution == null) {
+                solution = failedRun("solution", null, ex);
+            } else {
+                problems.add("Could not close the solution work folder. " + ex.getMessage());
             }
         }
 
         List<RunResult> alternatives = new ArrayList<>();
-        for (String variant : exercise.alternatives()) {
-            try (VariantRunner.Session session = runner.open(exercise, variant)) {
-                progress.accept(variant + ": clean test");
-                RunResult run = session.run();
-                if (run.ran()) {
-                    alternatives.add(run);
-                } else {
-                    problems.add(variant + " could not be run (" + run.build() + "), so it was left out. " + firstLine(run.problem()));
+        if (solution.ran()) {
+            for (String variant : exercise.alternatives()) {
+                RunResult run = runVariant(exercise, variant);
+                alternatives.add(run);
+                accountForRun(known, problems, run);
+                if (!run.ran()) {
+                    problems.add(variant + " could not be run (" + run.build() + "). " + firstLine(run.problem()));
                 }
             }
         }
-
+        if (!expectedTests.isEmpty()) {
+            Set<String> extras = new LinkedHashSet<>(known);
+            extras.removeAll(expectedTests);
+            if (!extras.isEmpty()) {
+                problems.add("Observed tests outside the expected list: " + String.join(", ", extras));
+            }
+        }
+        warnings.addAll(nameWarnings(solution));
         List<Verdict> verdicts = new ArrayList<>();
-        for (String test : allTestNames(solution, shuffled, alternatives)) {
+        for (String test : known) {
             verdicts.add(judge(test, solution, shuffled, alternatives));
         }
-        List<String> warnings = nameWarnings(solution);
-        List<BuggyResult> buggy = checkBuggy(exercise, referenceRuns, alternatives, problems, warnings);
-        return new Report(exercise.name(), solution.javaVersion(), alternatives.stream().map(RunResult::variant).toList(),
-                shuffled.size(), baseSeed, verdicts, problems, warnings, mutationResult, buggy, null);
+        if (!solution.ran()) {
+            String fatal = "The suite could not be run on the solution (" + solution.build() + ").\n" + solution.problem();
+            return new Report(exercise.name(), solution.javaVersion(), List.of(), 0, baseSeed, verdicts, problems,
+                    warnings, null, List.of(), fatal, 0);
+        }
+        List<RunResult> references = new ArrayList<>(List.of(solution));
+        references.addAll(shuffled);
+        List<BuggyResult> buggy = checkBuggy(exercise, references, alternatives, known, problems, warnings);
+        int referencePasses = 0;
+        for (String id : known) {
+            if (solution.outcomeOf(id) == TestOutcome.PASS) {
+                referencePasses++;
+            }
+        }
+        return new Report(exercise.name(), solution.javaVersion(), alternatives.stream().filter(RunResult::ran)
+                .map(RunResult::variant).toList(), (int) shuffled.stream().filter(RunResult::ran).count(), baseSeed,
+                verdicts, problems, warnings, mutationResult, buggy, null, referencePasses);
+    }
+
+    private static void accountForRun(Set<String> known, List<String> problems, RunResult run) {
+        run.tests().forEach(t -> known.add(t.qualifiedName()));
+        if (run.ran() && run.unattributedJvmExit()) {
+            problems.add(run.variant() + (run.seed() == null ? "" : " seed " + run.seed())
+                    + ": the test JVM was killed without an attributable timeout.");
+        }
+    }
+
+    private static RunResult failedRun(String variant, Long seed, IOException ex) {
+        return new RunResult(variant, seed, RunResult.Build.FAILED, false, null, List.of(), ex.getMessage());
+    }
+
+    private RunResult runVariant(Exercise exercise, String variant) throws InterruptedException {
+        progress.accept(variant + ": clean test");
+        try (VariantRunner.Session session = runner.open(exercise, variant)) {
+            return session.run();
+        } catch (IOException ex) {
+            return failedRun(variant, null, ex);
+        }
     }
 
     private List<BuggyResult> checkBuggy(Exercise exercise, List<RunResult> references, List<RunResult> alternatives,
-                                         List<String> problems, List<String> warnings) throws InterruptedException, IOException {
+                                         Set<String> known, List<String> problems, List<String> warnings)
+            throws InterruptedException, IOException {
         List<String> variants = exercise.buggyVariants();
         if (variants.isEmpty()) {
             return List.of();
         }
-        BuggyCheck check = new BuggyCheck(references, alternatives);
+        BuggyCheck check = new BuggyCheck(references, alternatives, known);
         List<BuggyResult> results = new ArrayList<>();
         for (String variant : variants) {
-            progress.accept(variant + ": clean test");
-            RunResult run;
-            try (VariantRunner.Session session = runner.open(exercise, variant)) {
-                run = session.run();
-            } catch (IOException ex) {
-                run = new RunResult(variant, null, RunResult.Build.FAILED, false, null, List.of(), ex.getMessage());
-            }
+            RunResult run = runVariant(exercise, variant);
             BugDescription description = BugDescription.EMPTY;
             try {
                 description = BugDescription.read(exercise.root().resolve(run.variant()));
@@ -138,93 +187,103 @@ public final class Validator {
         return results;
     }
 
-    private MutationResult mutate(VariantRunner.Session session, RunResult solution) throws IOException, InterruptedException {
-        long notPassing = solution.tests().stream().filter(t -> t.outcome() != TestOutcome.PASS).count();
-        if (notPassing > 0) {
-            // PIT first runs the suite unchanged and stops if anything fails: a red test cannot tell a mutant from the original.
-            return MutationResult.skipped(notPassing + (notPassing == 1 ? " test does" : " tests do")
-                    + " not pass on the solution. PIT needs a green suite to start from.");
+    private MutationResult mutate(VariantRunner.Session session, RunResult solution, Set<String> known)
+            throws InterruptedException {
+        long notPassing = known.stream().filter(id -> solution.outcomeOf(id) != TestOutcome.PASS).count();
+        if (notPassing > 0 || solution.jvmKilled() || known.isEmpty()) {
+            String reason = notPassing > 0 ? notPassing + (notPassing == 1 ? " test does" : " tests do")
+                    + " not have a unique passing result on the solution." : "The reference run was incomplete.";
+            return MutationResult.skipped(reason + " PIT needs a green suite to start from.");
         }
         progress.accept("solution: mutation testing with PIT");
-        return session.mutate();
-    }
-
-    /**
-     * The expected test list is the union over all runs. A single run is not enough: when a test JVM is killed,
-     * the tests after that point are simply absent from its XML.
-     */
-    private static Set<String> allTestNames(RunResult solution, List<RunResult> shuffled, List<RunResult> alternatives) {
-        Set<String> names = new LinkedHashSet<>();
-        List<RunResult> all = new ArrayList<>(List.of(solution));
-        all.addAll(shuffled);
-        all.addAll(alternatives);
-        for (RunResult run : all) {
-            run.tests().forEach(t -> names.add(t.name()));
+        try {
+            return session.mutate();
+        } catch (IOException ex) {
+            return MutationResult.failed("Could not obtain the PIT report. " + ex.getMessage());
         }
-        return names;
     }
 
     static Verdict judge(String test, RunResult solution, List<RunResult> shuffled, List<RunResult> alternatives) {
         List<String> evidence = new ArrayList<>();
-        long shuffledPasses = shuffled.stream().filter(r -> r.outcomeOf(test) == TestOutcome.PASS).count();
-
-        // 1. Solution check. A test that does not pass on the reference is wrong whatever the other runs say.
-        if (solution.outcomeOf(test) != TestOutcome.PASS) {
-            evidence.add(describe(test, solution) + " on the solution");
-            if (shuffledPasses > 0) {
-                evidence.add("but passed in " + shuffledPasses + " of " + shuffled.size() + " random-order runs, so it is also unstable");
-            }
-            return new Verdict(test, Status.REJECTED, evidence);
-        }
-
-        // 2. Flakiness check. NOT_RUN is not counted as a differing result: it is the echo of another test's timeout.
-        List<RunResult> differing = shuffled.stream().filter(r -> isObservedNonPass(r.outcomeOf(test))).toList();
-        if (!differing.isEmpty()) {
-            evidence.add("passed in " + shuffledPasses + " of " + shuffled.size() + " random-order runs");
-            differing.stream().limit(MAX_EVIDENCE_PER_KIND)
-                    .forEach(r -> evidence.add("seed " + r.seed() + ": " + describe(test, r)));
-            if (differing.size() > MAX_EVIDENCE_PER_KIND) {
-                evidence.add("... and " + (differing.size() - MAX_EVIDENCE_PER_KIND) + " more runs");
+        TestOutcome reference = observe(test, solution, evidence);
+        boolean incomplete = isIncomplete(reference) || solution.jvmKilled();
+        boolean shuffledFailure = false;
+        int shuffledPasses = 0;
+        for (RunResult run : shuffled) {
+            TestOutcome observed = observe(test, run, evidence);
+            incomplete |= isIncomplete(observed) || run.jvmKilled();
+            shuffledFailure |= isFailure(observed);
+            if (observed == TestOutcome.PASS) {
+                shuffledPasses++;
             }
         }
-
-        // 3. Alternatives check.
-        List<RunResult> failingAlternatives = alternatives.stream().filter(r -> isObservedNonPass(r.outcomeOf(test))).toList();
-        failingAlternatives.forEach(r -> evidence.add(describe(test, r) + " on " + r.variant()));
-
-        // Runs that never reached the test: no verdict from them, but say so instead of implying a pass.
-        long unreachedShuffled = shuffled.stream().filter(r -> r.outcomeOf(test) == TestOutcome.NOT_RUN).count();
-        if (unreachedShuffled > 0) {
-            evidence.add("not run in " + unreachedShuffled + " of " + shuffled.size() + " random-order runs (test JVM killed earlier in the run)");
+        if (shuffledFailure || (isFailure(reference) && shuffledPasses > 0)) {
+            evidence.add("passed in " + shuffledPasses + " of " + shuffled.size() + " attempted random-order runs");
         }
-        List<String> unreachedAlternatives = alternatives.stream()
-                .filter(r -> r.outcomeOf(test) == TestOutcome.NOT_RUN).map(RunResult::variant).toList();
-        if (!unreachedAlternatives.isEmpty()) {
-            evidence.add("not run on " + String.join(", ", unreachedAlternatives) + " (test JVM killed earlier in the run, or the test is missing there)");
+        boolean alternativeFailure = false;
+        for (RunResult run : alternatives) {
+            TestOutcome observed = observe(test, run, evidence);
+            incomplete |= isIncomplete(observed) || run.jvmKilled();
+            alternativeFailure |= isFailure(observed);
         }
 
         Status status;
-        if (!differing.isEmpty()) {
-            status = Status.FLAKY; // ranks above over-specified: an unstable test makes its other results unreliable
-        } else if (!failingAlternatives.isEmpty()) {
+        if (isFailure(reference)) {
+            status = Status.REJECTED;
+        } else if (isIncomplete(reference)) {
+            status = Status.NOT_CHECKED;
+        } else if (shuffledFailure) {
+            status = Status.FLAKY;
+        } else if (alternativeFailure) {
             status = Status.OVER_SPECIFIED;
-        } else if (unreachedShuffled > 0 || !unreachedAlternatives.isEmpty()) {
+        } else if (incomplete) {
             status = Status.NOT_CHECKED;
         } else {
             status = Status.OK;
+            evidence.add("Passed on the solution. Random-order runs passed: " + shuffledPasses
+                    + ". Correct alternatives passed: " + alternatives.size() + ".");
         }
-        return new Verdict(test, status, evidence);
+        return new Verdict(test, status, List.copyOf(evidence), incomplete);
     }
 
-    private static boolean isObservedNonPass(TestOutcome outcome) {
-        return outcome != TestOutcome.PASS && outcome != TestOutcome.NOT_RUN;
+    private static boolean isFailure(TestOutcome outcome) {
+        return outcome == TestOutcome.FAIL || outcome == TestOutcome.TIMEOUT;
     }
 
-    private static String describe(String test, RunResult run) {
-        TestResult result = run.find(test).orElse(null);
-        if (result == null) {
-            return "NOT RUN (missing from the results" + (run.jvmKilled() ? ", the test JVM was killed earlier" : "") + ")";
+    private static boolean isIncomplete(TestOutcome outcome) {
+        return outcome != TestOutcome.PASS && !isFailure(outcome);
+    }
+
+    /** Preserve partial XML as evidence even when the build cannot support a verdict about this test. */
+    private static TestOutcome observe(String test, RunResult run, List<String> evidence) {
+        List<TestResult> rows = run.matches(test);
+        TestOutcome outcome = run.outcomeOf(rows);
+        if (outcome == TestOutcome.PASS && !run.jvmKilled()) {
+            return outcome;
         }
+        String detail;
+        if (rows.isEmpty()) {
+            detail = "NOT RUN (missing from the results" + (run.jvmKilled() ? ", test JVM killed" : "") + ")";
+        } else if (rows.size() > 1) {
+            detail = "AMBIGUOUS (" + rows.size() + " results for the same identity: "
+                    + String.join(", ", rows.stream().map(Validator::describe).toList()) + ")";
+        } else if (rows.get(0).className().isBlank() || rows.get(0).name().isBlank()) {
+            detail = "AMBIGUOUS (missing XML class or invocation name): " + describe(rows.get(0));
+        } else {
+            detail = describe(rows.get(0));
+        }
+        if (run.jvmKilled()) {
+            detail += run.unattributedJvmExit() ? " (test JVM exit could not be attributed)" : " (test JVM was killed)";
+        }
+        if (!run.ran()) {
+            detail = "Build " + run.build() + " (" + firstLine(run.problem()) + "). " + detail;
+        }
+        evidence.add(run.seed() == null ? detail + " on " + (run.variant().equals("solution") ? "the solution" : run.variant())
+                : "seed " + run.seed() + ": " + detail);
+        return outcome;
+    }
+
+    private static String describe(TestResult result) {
         return result.message().isEmpty() ? result.outcome().name() : result.outcome() + " (" + result.message() + ")";
     }
 
@@ -242,7 +301,7 @@ public final class Validator {
             }
             if (classes.size() > 1) {
                 warnings.add("Test name \"" + name + "\" exists in " + classes.size() + " classes (" + String.join(", ", classes)
-                        + "). Results are keyed by name, so they are merged here.");
+                        + "). Check the Artemis task binding. The report shows each class separately.");
             }
         });
         return warnings;

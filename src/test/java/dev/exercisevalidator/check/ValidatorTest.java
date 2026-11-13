@@ -41,7 +41,7 @@ class ValidatorTest {
     }
 
     private static Verdict judge(RunResult solution, List<RunResult> shuffled, List<RunResult> alternatives) {
-        return Validator.judge("a()", solution, shuffled, alternatives);
+        return Validator.judge("com.example.SomeTest#a()", solution, shuffled, alternatives);
     }
 
     @Test
@@ -51,7 +51,7 @@ class ValidatorTest {
                 List.of(run("alternatives/x", null, false, test("a()", TestOutcome.PASS))));
 
         assertEquals(Status.OK, verdict.status());
-        assertTrue(verdict.evidence().isEmpty());
+        assertEquals(List.of("Passed on the solution. Random-order runs passed: 1. Correct alternatives passed: 1."), verdict.evidence());
     }
 
     @Test
@@ -72,11 +72,11 @@ class ValidatorTest {
 
     /** A test that is missing from the solution's XML must never count as passed. */
     @Test
-    void missingOnTheSolutionIsRejectedAsNotRun() {
+    void missingOnTheSolutionIsNotChecked() {
         RunResult killed = run("solution", null, true, test("other()", TestOutcome.TIMEOUT));
         Verdict verdict = judge(killed, List.of(), List.of(run("alternatives/x", null, false, test("a()", TestOutcome.PASS))));
 
-        assertEquals(Status.REJECTED, verdict.status());
+        assertEquals(Status.NOT_CHECKED, verdict.status());
         assertTrue(verdict.evidence().get(0).startsWith("NOT RUN"), verdict.evidence().toString());
     }
 
@@ -88,7 +88,7 @@ class ValidatorTest {
                 List.of());
 
         assertEquals(Status.FLAKY, verdict.status());
-        assertEquals(List.of("passed in 1 of 2 random-order runs", "seed 22: FAIL (boom)"), verdict.evidence());
+        assertEquals(List.of("seed 22: FAIL (boom)", "passed in 1 of 2 attempted random-order runs"), verdict.evidence());
     }
 
     @Test
@@ -118,6 +118,34 @@ class ValidatorTest {
                 List.of(run("alternatives/y", null, true, test("other()", TestOutcome.TIMEOUT))));
 
         assertEquals(Status.NOT_CHECKED, verdict.status());
+    }
+
+    @Test
+    void skippedRepeatedOrUnnamedRowsCannotEstablishAnOutcome() {
+        RunResult green = solution(test("a()", TestOutcome.PASS));
+        for (RunResult partial : List.of(solution(test("a()", TestOutcome.SKIPPED)),
+                solution(test("a()", TestOutcome.PASS), test("a()", TestOutcome.FAIL)))) {
+            assertEquals(Status.NOT_CHECKED, judge(partial, List.of(), List.of()).status());
+            assertEquals(Status.NOT_CHECKED, judge(green, List.of(partial), List.of()).status());
+            assertEquals(Status.NOT_CHECKED, judge(green, List.of(), List.of(partial)).status());
+        }
+        for (TestResult unknown : List.of(new TestResult("a()", "", TestOutcome.PASS, ""),
+                new TestResult("", "lab.Plane", TestOutcome.PASS, ""))) {
+            Verdict result = Validator.judge(unknown.qualifiedName(), solution(unknown), List.of(), List.of());
+            assertTrue(result.incomplete());
+            assertTrue(result.evidence().get(0).contains("missing XML class or invocation name"));
+        }
+    }
+
+    @Test
+    void rawFailureAndIncompleteExecutionAreBothRetained() {
+        Verdict result = judge(solution(test("a()", TestOutcome.PASS)),
+                List.of(run("solution", 10L, false, test("a()", TestOutcome.FAIL))),
+                List.of(run("alternatives/z", null, false, test("a()", TestOutcome.SKIPPED))));
+        assertEquals(Status.FLAKY, result.status());
+        assertTrue(result.incomplete());
+        assertTrue(result.evidence().stream().anyMatch(e -> e.contains("seed 10: FAIL")));
+        assertTrue(result.evidence().stream().anyMatch(e -> e.contains("SKIPPED") && e.contains("alternatives/z")));
     }
 
     @Test
@@ -216,6 +244,83 @@ class ValidatorTest {
     }
 
     @Test
+    void inventoryAndObservedQualifiedInvocationsEachGetOneVerdict() throws Exception {
+        TestResult first = new TestResult("trial [2]", "lab.East", TestOutcome.PASS, "");
+        TestResult second = new TestResult("trial [2]", "lab.West", TestOutcome.FAIL, "wrong value");
+        String absent = "lab.East#trial [1]";
+        ScriptedRunner runner = new ScriptedRunner();
+        runner.script.put("solution", List.of(solution(first, second)));
+
+        Report report = new Validator(runner, step -> { }).validate(EXERCISE, 0, 9, true,
+                List.of(absent, first.qualifiedName()));
+        assertEquals(List.of(absent, first.qualifiedName(), second.qualifiedName()),
+                report.verdicts().stream().map(Verdict::test).toList());
+        assertEquals(List.of(Status.NOT_CHECKED, Status.OK, Status.REJECTED),
+                report.verdicts().stream().map(Verdict::status).toList());
+        assertEquals(1, report.referencePasses());
+        assertTrue(report.problems().stream().anyMatch(w -> w.contains("outside") && w.contains(second.qualifiedName())));
+        assertEquals(MutationResult.State.SKIPPED, report.mutation().state());
+    }
+
+    @Test
+    void unobservedExpectedTestPreventsPitEvenWhenAllXmlRowsPass() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner();
+        runner.script.put("solution", List.of(solution(test("a()", TestOutcome.PASS))));
+        Report report = new Validator(runner, step -> { }).validate(EXERCISE, 0, 3, true, List.of("lab.Sky#omitted()"));
+        assertEquals(0, runner.mutationRuns);
+        assertEquals(1, report.referencePasses());
+        assertEquals(MutationResult.State.SKIPPED, report.mutation().state());
+    }
+
+    @Test
+    void fatalBuildAccountsForInventoryAndRetainedXmlWithoutCreditingPasses() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner();
+        TestResult row = test("a()", TestOutcome.PASS);
+        runner.script.put("solution", List.of(new RunResult("solution", null, Build.FAILED, false, "17",
+                List.of(row), "finalizer failed")));
+        Report report = new Validator(runner, step -> { }).validate(EXERCISE, 4, 9, true, List.of("lab.Sky#other"));
+        assertEquals(2, report.exitCode());
+        assertEquals(0, report.referencePasses());
+        assertEquals(2, report.count(Status.NOT_CHECKED));
+        assertTrue(report.verdicts().get(1).evidence().get(0).contains("PASS"));
+        assertTrue(report.verdicts().get(1).evidence().get(0).contains("Build FAILED"));
+    }
+
+    @Test
+    void unexplainedJvmExitRetainsEarlierPassButCannotCertifyGrading() throws Exception {
+        TestResult row = test("a()", TestOutcome.PASS);
+        ScriptedRunner runner = new ScriptedRunner();
+        runner.script.put("solution", List.of(run("solution", null, true,
+                test("earlierOrdinaryTimeout()", TestOutcome.TIMEOUT), row)));
+        Report report = new Validator(runner, step -> { }).validate(EXERCISE, 0, 2, false);
+        assertEquals(1, report.referencePasses());
+        assertEquals(1, report.count(Status.NOT_CHECKED));
+        assertEquals(1, report.problems().size());
+        assertEquals(1, report.count(Status.REJECTED));
+        assertTrue(report.verdicts().get(1).evidence().get(0).contains("PASS"));
+        assertTrue(judge(solution(row), List.of(run("solution", 1L, true, row)), List.of()).incomplete());
+        assertTrue(judge(solution(row), List.of(), List.of(run("alternatives/x", null, true, row))).incomplete());
+        TestResult interrupted = new TestResult("later()", "com.example.SomeTest", TestOutcome.TIMEOUT, "interrupted", true);
+        assertEquals(Status.NOT_CHECKED, judge(solution(row), List.of(), List.of(run("alternatives/x", null, true,
+                row, interrupted))).status());
+    }
+
+    @Test
+    void failedAlternativeRetainsPartialEvidenceAndInventory(@TempDir Path temp) throws Exception {
+        ScriptedRunner runner = new ScriptedRunner();
+        TestResult row = test("a()", TestOutcome.PASS);
+        TestResult extra = test("seenOnlyInBrokenBuild()", TestOutcome.FAIL);
+        Files.createDirectories(temp.resolve("alternatives/south/src"));
+        runner.script.put("solution", List.of(solution(row)));
+        runner.script.put("alternatives/south", List.of(new RunResult("alternatives/south", null, Build.FAILED,
+                false, "17", List.of(row, extra), "finalizer failed")));
+        Report report = new Validator(runner, step -> { }).validate(new Exercise(temp), 0, 0, false);
+        assertEquals(List.of(row.qualifiedName(), extra.qualifiedName()), report.verdicts().stream().map(Verdict::test).toList());
+        assertEquals(2, report.count(Status.NOT_CHECKED));
+        assertTrue(report.verdicts().get(0).evidence().get(0).contains("finalizer failed"));
+    }
+
+    @Test
     void cleanSuiteHasExitCode0AndReproducibleDistinctSeeds() throws Exception {
         ScriptedRunner runner = new ScriptedRunner();
         RunResult green = solution(test("a()", TestOutcome.PASS));
@@ -242,6 +347,8 @@ class ValidatorTest {
         Report report = new Validator(runner, step -> { }).validate(EXERCISE, 5, 1, false);
 
         assertEquals(1, report.shuffledRuns());
+        assertEquals(1, report.count(Status.NOT_CHECKED));
+        assertTrue(report.verdicts().get(0).evidence().get(0).contains("TIMED_OUT"));
         assertEquals(1, report.problems().size());
         assertEquals(1, report.exitCode());
     }
@@ -272,7 +379,7 @@ class ValidatorTest {
 
         assertEquals(0, runner.mutationRuns, "PIT cannot start from a failing suite");
         assertEquals(MutationResult.State.SKIPPED, report.mutation().state());
-        assertTrue(report.mutation().note().startsWith("1 test does not pass on the solution"), report.mutation().note());
+        assertTrue(report.mutation().note().startsWith("1 test does not have a unique passing result on the solution"), report.mutation().note());
     }
 
     @Test

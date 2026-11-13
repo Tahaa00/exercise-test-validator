@@ -85,17 +85,17 @@ class ValidatorIntegrationTest {
                 assertEquals(RunResult.Build.RAN, run.build(), run.problem());
                 assertEquals(2, run.tests().size());
                 if (variant.endsWith("missing-null-guard")) {
-                    assertEquals(TestOutcome.FAIL, run.outcomeOf("nullWitness()"));
-                    assertTrue(run.find("nullWitness()").orElseThrow().message().contains("NullPointerException"));
+                    assertEquals(TestOutcome.FAIL, run.outcomeOf("com.example.arraymax.ArrayMaxWitnessTest#nullWitness()"));
+                    assertTrue(run.find("com.example.arraymax.ArrayMaxWitnessTest#nullWitness()").orElseThrow().message().contains("NullPointerException"));
                 } else {
-                    assertEquals(TestOutcome.PASS, run.outcomeOf("nullWitness()"));
+                    assertEquals(TestOutcome.PASS, run.outcomeOf("com.example.arraymax.ArrayMaxWitnessTest#nullWitness()"));
                 }
                 if (variant.endsWith("sorts-input")) {
-                    assertEquals(TestOutcome.FAIL, run.outcomeOf("inputWitness()"));
+                    assertEquals(TestOutcome.FAIL, run.outcomeOf("com.example.arraymax.ArrayMaxWitnessTest#inputWitness()"));
                     // The return-value assertion passed and the side-effect assertion showed the mutated input.
-                    assertTrue(run.find("inputWitness()").orElseThrow().message().contains("expected: <[2, 1]> but was: <[1, 2]>"));
+                    assertTrue(run.find("com.example.arraymax.ArrayMaxWitnessTest#inputWitness()").orElseThrow().message().contains("expected: <[2, 1]> but was: <[1, 2]>"));
                 } else {
-                    assertEquals(TestOutcome.PASS, run.outcomeOf("inputWitness()"));
+                    assertEquals(TestOutcome.PASS, run.outcomeOf("com.example.arraymax.ArrayMaxWitnessTest#inputWitness()"));
                 }
             }
         }
@@ -112,7 +112,7 @@ class ValidatorIntegrationTest {
         assertEquals(3, report.alternatives().size());
         Map<String, Status> statuses = statuses(report);
         assertEquals(7, statuses.size());
-        assertEquals(Status.OVER_SPECIFIED, statuses.get("emptyArrayIsRejected()"));
+        assertEquals(Status.OVER_SPECIFIED, statuses.get("com.example.arraymax.ArrayMaxTest#emptyArrayIsRejected()"));
         assertEquals(6, report.count(Status.OK));
         Verdict finding = report.verdicts().stream().filter(v -> v.status() == Status.OVER_SPECIFIED).findFirst().orElseThrow();
         assertTrue(finding.evidence().get(0).endsWith("on alternatives/b-other-message"), finding.evidence().toString());

@@ -20,12 +20,18 @@ final class BuggyCheck {
     private final boolean hasCompletedReference;
 
     BuggyCheck(List<RunResult> referenceRuns, List<RunResult> alternatives) {
-        hasCompletedReference = referenceRuns.stream().anyMatch(r -> r.ran() && !r.jvmKilled() && !r.tests().isEmpty());
+        this(referenceRuns, alternatives, Set.of());
+    }
+
+    BuggyCheck(List<RunResult> referenceRuns, List<RunResult> alternatives, Set<String> known) {
+        expected.addAll(known);
         for (RunResult reference : referenceRuns) {
             collectTests(reference);
         }
         alternatives.forEach(this::collectTests);
 
+        hasCompletedReference = referenceRuns.stream().anyMatch(r -> r.ran() && !r.jvmKilled() && !expected.isEmpty()
+                && expected.stream().allMatch(id -> r.find(id).isPresent()));
         referencePasses.addAll(expected);
         for (RunResult reference : referenceRuns) {
             Set<String> passed = new HashSet<>();
@@ -42,7 +48,7 @@ final class BuggyCheck {
         for (TestResult test : run.tests()) {
             String id = test.qualifiedName();
             expected.add(id);
-            if (!seen.add(id)) {
+            if (!seen.add(id) || test.className().isBlank() || test.name().isBlank()) {
                 ambiguous.add(id);
             }
         }
@@ -98,11 +104,8 @@ final class BuggyCheck {
         if (run.jvmKilled()) {
             return "The test JVM was killed.";
         }
-        if (!hasCompletedReference) {
-            return "No reference run finished to establish the suite's test list.";
-        }
         if (!ambiguous.isEmpty()) {
-            return "Repeated test identity: " + String.join(", ", ambiguous);
+            return "Incomplete or repeated test identity: " + String.join(", ", ambiguous);
         }
         Set<String> missing = new LinkedHashSet<>(expected);
         for (TestResult test : run.tests()) {
@@ -120,6 +123,9 @@ final class BuggyCheck {
         if (!missing.isEmpty()) {
             return "Missing test results: " + String.join(", ", missing);
         }
-        return run.tests().isEmpty() ? "No tests ran." : null;
+        if (!hasCompletedReference) {
+            return "No completed reference run contained every expected test identity.";
+        }
+        return null;
     }
 }

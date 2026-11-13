@@ -16,11 +16,12 @@ gradle.projectsEvaluated {
 allprojects {
     tasks.withType(Test).configureEach {
         def events = new File(project.rootDir, 'validator-test-events.tsv')
-        def clean = { text -> (text ?: '').toString().replaceAll(/\s+/, ' ') }
+        // Encode every free-text field so tabs, newlines and repeated spaces survive the TSV round trip.
+        def encode = { text -> (text ?: '').toString().getBytes('UTF-8').encodeBase64().toString() }
         doFirst { events.text = '' }
-        beforeTest { test -> events << "START\t${test.className}\t${clean(test.displayName)}\n" }
+        beforeTest { test -> events << "START\t${encode(test.className)}\t${encode(test.displayName)}\n" }
         afterTest { test, result ->
-            events << "END\t${test.className}\t${clean(test.displayName)}\t${result.resultType}\t${clean(result.exception)}\n"
+            events << "END\t${encode(test.className)}\t${encode(test.displayName)}\t${result.resultType}\t${encode(result.exception)}\n"
         }
         if (seed != null) {
             systemProperty 'junit.jupiter.testmethod.order.default', 'org.junit.jupiter.api.MethodOrderer$Random'

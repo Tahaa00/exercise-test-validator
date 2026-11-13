@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -79,6 +80,15 @@ class BuggyCheckTest {
         BuggyResult caught = check.judge(run(FAIL, test("p.Second", TestOutcome.FAIL)), BugDescription.EMPTY);
         assertEquals(Status.CAUGHT, caught.status());
         assertEquals(List.of("p.Second#check()"), caught.catchingTests());
+    }
+
+    @Test
+    void independentlyExpectedIdentityCannotDisappearFromTheBuggyComparison() {
+        BuggyCheck check = new BuggyCheck(List.of(run(PASS)), List.of(), Set.of(PASS.qualifiedName(), OTHER.qualifiedName()));
+        BuggyResult partial = check.judge(run(PASS), BugDescription.EMPTY);
+        assertEquals(Status.INCONCLUSIVE, partial.status());
+        assertTrue(partial.problem().contains(OTHER.qualifiedName()));
+        assertEquals(Status.INCONCLUSIVE, check.judge(run(PASS, OTHER), BugDescription.EMPTY).status());
     }
 
     @Test
