@@ -1,0 +1,4 @@
+clock.ConversionTest#oneHour()
+clock.SecondConversionTest#oneHour()
+clock.ConversionTest#twoHours()
+clock.ConversionTest#zeroHours()

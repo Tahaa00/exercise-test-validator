@@ -1,7 +1,7 @@
 # exercise-test-validator
 
-Checks whether the unit tests of a Java programming exercise are correct **before** they grade students.
-It runs the tests instead of judging them:
+Helps tutors review the unit tests of a Java programming exercise before they grade students.
+It runs the suite and reports evidence for three kinds of problems.
 
 - **False fail:** a correct solution fails a test (for example, a test that demands one exact error message).
   Found by running the tests against several different correct solutions.
@@ -59,14 +59,22 @@ array-max  (Java 17, 7 tests, 3 alternatives, 10 random-order runs, base seed 10
 
 Tests on the reference, shuffled reruns and correct alternatives
 
-  OK               maxOfNegativeValues()
-  OK               maxOfSingleValue()
-  OVER-SPECIFIED?  emptyArrayIsRejected()
+  PASSED CHECKS    com.example.arraymax.ArrayMaxTest#maxOfNegativeValues()
+                     Passed on the solution. Random-order runs passed: 10. Correct alternatives passed: 3.
+  PASSED CHECKS    com.example.arraymax.ArrayMaxTest#maxOfSingleValue()
+                     Passed on the solution. Random-order runs passed: 10. Correct alternatives passed: 3.
+  OVER-SPECIFIED?  com.example.arraymax.ArrayMaxTest#emptyArrayIsRejected()
                      FAIL (max([]) threw the wrong message. Expected: Array must not be empty But was: values has no elements) on alternatives/b-other-message
-  OK               maxAtLastPosition()
-  OK               maxOfMixedValues()
-  OK               nullArrayIsRejected()
-  OK               arrayIsNotModified()
+  PASSED CHECKS    com.example.arraymax.ArrayMaxTest#maxAtLastPosition()
+                     Passed on the solution. Random-order runs passed: 10. Correct alternatives passed: 3.
+  PASSED CHECKS    com.example.arraymax.ArrayMaxTest#maxOfMixedValues()
+                     Passed on the solution. Random-order runs passed: 10. Correct alternatives passed: 3.
+  PASSED CHECKS    com.example.arraymax.ArrayMaxTest#nullArrayIsRejected()
+                     Passed on the solution. Random-order runs passed: 10. Correct alternatives passed: 3.
+  PASSED CHECKS    com.example.arraymax.ArrayMaxTest#arrayIsNotModified()
+                     Passed on the solution. Random-order runs passed: 10. Correct alternatives passed: 3.
+
+  WARNING  Test inventory uses observed executions only. Tests absent from every run require an independent expected list.
 
 Tutor-written buggy variants
 
@@ -87,7 +95,7 @@ Tutor-written buggy variants
 
 Mutation check (PIT on the solution, STRONGER mutators)
 
-  11 mutants: 9 detected, 2 survived, 0 not covered
+  11 mutants: 9 killed, 0 timed out, 0 run errors, 2 survived, 0 not covered
 
   SURVIVED     ArrayMax.java:9   max()  removed conditional - replaced equality check with true
                  if (values == null || values.length == 0) {
@@ -107,14 +115,33 @@ run the exercise's own `./gradlew clean test`, read the JUnit XML. The exercise'
 
 | Status | Meaning |
 |---|---|
-| `OK` | Passes on the solution, in every random-order run and on every alternative. |
+| `PASSED CHECKS` | This invocation passed on the reference and in the listed reruns and correct alternatives. A weak assertion can still pass all of them. |
 | `REJECTED` | Does not pass on the reference solution. |
 | `FLAKY` | Passes in the declared order, but not in every random-order run. The failing seeds are shown. |
 | `OVER-SPECIFIED?` | Fails on an alternative solution. Either the test demands more than the task, or the alternative is wrong: you decide. |
-| `NOT CHECKED` | A run never reached this test because the test JVM was killed earlier (a timeout in another test). |
+| `NOT CHECKED` | A required run lacks an attributable result. The report identifies skipped, missing, duplicate or incomplete executions. |
 
 Timeouts are shown as `TIMEOUT`, not as `FAIL`. A build that produces no test results at all (compile error,
 failed dependency download) is reported as a build problem, not as failing tests.
+
+### Checking which tests ran
+
+The report identifies each invocation by its JUnit XML class and name. Two classes can both have a `oneHour()` test and receive different results. By default the validator can list only the tests it observed. To detect a test excluded from every run, supply the tests you intended to grade.
+
+```bash
+build/install/exercise-test-validator/bin/exercise-test-validator validate path/to/exercise \
+  --expected-tests expected-tests.txt --decisions baseline.csv
+```
+
+Use one UTF-8 line per expected invocation, for example `clock.ConversionTest#oneHour()`. Use the exact name the exercise's JUnit XML reports. When several invocations grade one criterion, append a literal tab and the same class-qualified grading ID to each member line. Every member has to pass the requested checks to earn a baseline `OK`. Without a list, the export has one row per observed invocation.
+
+The CSV contains `exercise,test,decision`. Use a fresh output path outside the exercise's source and test folders. Keep the text report alongside it for the evidence. The exercise ID is the exercise folder's name.
+
+- `OK` records a baseline pass on the checks you ran. Its reliability as a reason to skip manual review has yet to be measured.
+- `REVIEW` flags a failure on the reference, a shuffled run or a correct alternative. The text report names the failing test and where it failed.
+- `INCOMPLETE` means evidence is missing or ambiguous. It takes precedence over other decisions in a group. A failed required build, an unexpected invocation outside the list, or a requested PIT check that could not run makes the whole export incomplete. The text report retains individual observations.
+
+A test can pass while a requirement goes untested. In the sample above, `nullArrayIsRejected()` passed every correct implementation **and** accepted the wrong exception on `buggy/missing-null-guard`. The buggy-variant section shows that gap.
 
 ### Tutor-written buggy variants
 
@@ -153,7 +180,7 @@ Options: `--runs <n>` (random-order runs, default 10), `--seed <n>` (replay the 
 `--no-mutation` (skip the mutation check),
 `--timeout-minutes <n>` (limit per Gradle run, default 10), `--java-home <path>` (JDK to start the exercise's Gradle with),
 `--keep-work` (keep work folders and Gradle logs).
-Exit code: 0 no findings, 1 findings, 2 the solution could not be run.
+Exit codes are 0 for no findings in the checks run, 1 for findings or incomplete grading evidence, 2 for input, file or fatal reference errors, and 3 when an attempted PIT run fails to produce a usable report. If the reference suite is unfit for PIT, the report gives the reason for skipping it and the reference findings determine the exit code.
 
 ## Tests of the tool itself
 

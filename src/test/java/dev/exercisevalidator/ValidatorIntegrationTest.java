@@ -4,9 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +46,36 @@ class ValidatorIntegrationTest {
 
     private static Map<String, Status> statuses(Report report) {
         return report.verdicts().stream().collect(Collectors.toMap(Verdict::test, Verdict::status));
+    }
+
+    @Test
+    void cliAccountsForSameNamedSkippedAndFilteredTests(@TempDir Path temp) throws Exception {
+        Path root = temp.resolve("test-accounting");
+        copy(Path.of("src/test/exercises/test-accounting"), root);
+        Path build = root.resolve("tests");
+        copy(PLAIN_SAMPLE.resolve("tests/gradle"), build.resolve("gradle"));
+        for (String file : List.of("gradlew", "gradlew.bat", "settings.gradle", "build.gradle")) {
+            Files.copy(PLAIN_SAMPLE.resolve("tests").resolve(file), build.resolve(file));
+        }
+        Files.writeString(build.resolve("build.gradle"), "\ntest { useJUnitPlatform { excludeTags 'deferred' } }\n",
+                StandardOpenOption.APPEND);
+
+        Path csv = temp.resolve("decisions.csv");
+        var console = new ByteArrayOutputStream();
+        var errors = new ByteArrayOutputStream();
+        int exit = Main.run(new String[]{"validate", root.toString(), "--runs", "0", "--no-mutation",
+                        "--expected-tests", root.resolve("expected-tests.txt").toString(), "--decisions", csv.toString()},
+                new PrintStream(console, true, StandardCharsets.UTF_8), new PrintStream(errors, true, StandardCharsets.UTF_8));
+        String report = console.toString(StandardCharsets.UTF_8);
+        assertEquals(1, exit, () -> report + errors.toString(StandardCharsets.UTF_8));
+        assertTrue(report.contains("Solution: 1/4 pass"), report);
+        assertTrue(report.contains("SKIPPED"), report);
+        assertTrue(report.contains("NOT RUN"), report);
+        assertEquals(List.of("exercise,test,decision",
+                "\"test-accounting\",\"clock.ConversionTest#oneHour()\",OK",
+                "\"test-accounting\",\"clock.SecondConversionTest#oneHour()\",REVIEW",
+                "\"test-accounting\",\"clock.ConversionTest#twoHours()\",INCOMPLETE",
+                "\"test-accounting\",\"clock.ConversionTest#zeroHours()\",INCOMPLETE"), Files.readAllLines(csv));
     }
 
     @Test
