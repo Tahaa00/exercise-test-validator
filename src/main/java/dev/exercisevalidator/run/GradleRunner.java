@@ -100,6 +100,7 @@ public final class GradleRunner implements VariantRunner {
         private RunResult gradle(Long seed, String... tasks) throws IOException, InterruptedException {
             Path results = work.resolve("build/test-results/test");
             deleteTree(results); // never read XML left over from a previous run
+            Files.deleteIfExists(work.resolve(KilledJvm.EVENTS_FILE));
 
             Path log = work.resolve(LOG_FILE);
             List<String> arguments = new ArrayList<>(List.of(tasks));
@@ -128,6 +129,11 @@ public final class GradleRunner implements VariantRunner {
                         : new RunResult(variant, seed, RunResult.Build.FAILED, jvmKilled, javaVersion, tests,
                                 whatWentWrong(output) + jdkHint(output));
             }
+            // XML can already exist when a finalizer or another build task fails. A red Gradle exit
+            // is an ordinary completed test run only when failing tests account for that exit.
+            if (exit != 0 && !jvmKilled && !failedOnlyOnTests(output, tests)) {
+                return new RunResult(variant, seed, RunResult.Build.FAILED, false, javaVersion, tests, whatWentWrong(output));
+            }
             return new RunResult(variant, seed, RunResult.Build.RAN, jvmKilled, javaVersion, tests, null);
         }
 
@@ -144,8 +150,11 @@ public final class GradleRunner implements VariantRunner {
             }
             String output = Files.readString(log);
             Path xml = report.resolve("mutations.xml");
-            if (exit != 0 || !Files.isRegularFile(xml)) {
-                return MutationResult.failed(pitProblem(output));
+            if (exit != 0) {
+                return MutationResult.failed("PIT build exited with code " + exit + ". " + pitProblem(output));
+            }
+            if (!Files.isRegularFile(xml)) {
+                return MutationResult.failed("The PIT task finished but produced no build/reports/pitest/mutations.xml.");
             }
             String remark = output.contains(ARES1_TRUSTED) ? "This build uses Ares 1, whose security manager blocks PIT. "
                     + "For this PIT run only, Ares was told to trust the solution's classes and PIT." : null;
@@ -208,6 +217,14 @@ public final class GradleRunner implements VariantRunner {
         int end = output.indexOf("* Try:", start);
         String text = output.substring(start + "* What went wrong:".length(), end < 0 ? output.length() : end);
         return text.lines().map(String::stripTrailing).filter(l -> !l.isBlank()).limit(25).collect(Collectors.joining("\n"));
+    }
+
+    static boolean failedOnlyOnTests(String output, List<TestResult> tests) {
+        String marker = "* What went wrong:";
+        String reason = whatWentWrong(output);
+        return output.indexOf(marker) >= 0 && output.indexOf(marker) == output.lastIndexOf(marker)
+                && reason.startsWith("Execution failed for task ':test'.\n> There were failing tests")
+                && tests.stream().anyMatch(t -> t.outcome() == TestOutcome.FAIL || t.outcome() == TestOutcome.TIMEOUT);
     }
 
     /**

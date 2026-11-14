@@ -16,24 +16,44 @@ import dev.exercisevalidator.run.MutationResult;
  * @param mutation     result of the mutation check, or null when it was switched off or never reached.
  *                     Survivors are hints for a human (some mutants are equivalent to the original),
  *                     so they count neither as findings nor towards the exit code.
- * @param fatal        set when the solution itself could not be run; then there are no verdicts
+ * @param fatal        diagnostic when a reference run could not complete
+ * @param referencePasses number of unique, attributable passes in the reference run, or -1 when unavailable
  */
 public record Report(String exercise, String javaVersion, List<String> alternatives, int shuffledRuns, long baseSeed,
                      List<Verdict> verdicts, List<String> problems, List<String> warnings, MutationResult mutation,
-                     String fatal) {
+                     List<BuggyResult> buggyVariants, String fatal, int referencePasses) {
+
+    public Report(String exercise, String javaVersion, List<String> alternatives, int shuffledRuns, long baseSeed,
+                  List<Verdict> verdicts, List<String> problems, List<String> warnings, MutationResult mutation, String fatal) {
+        this(exercise, javaVersion, alternatives, shuffledRuns, baseSeed, verdicts, problems, warnings, mutation, List.of(), fatal);
+    }
+
+    public Report(String exercise, String javaVersion, List<String> alternatives, int shuffledRuns, long baseSeed,
+                  List<Verdict> verdicts, List<String> problems, List<String> warnings, MutationResult mutation,
+                  List<BuggyResult> buggyVariants, String fatal) {
+        this(exercise, javaVersion, alternatives, shuffledRuns, baseSeed, verdicts, problems, warnings, mutation,
+                buggyVariants, fatal, -1);
+    }
 
     public long count(Verdict.Status status) {
         return verdicts.stream().filter(v -> v.status() == status).count();
     }
 
-    public long findings() {
-        return verdicts.size() - count(Verdict.Status.OK) + problems.size();
+    public long missedBuggyVariants() {
+        return buggyVariants.stream().filter(b -> b.status() == BuggyResult.Status.MISSED).count();
     }
 
-    /** 0 = clean, 1 = findings, 2 = the solution could not be run. Lets CI fail on a bad suite. */
+    public long findings() {
+        return verdicts.size() - count(Verdict.Status.OK) + problems.size() + missedBuggyVariants();
+    }
+
+    /** 0 = no findings, 1 = findings, 2 = fatal reference run, 3 = requested PIT run produced no usable report. */
     public int exitCode() {
         if (fatal != null) {
             return 2;
+        }
+        if (mutation != null && mutation.state() == MutationResult.State.FAILED) {
+            return 3;
         }
         return findings() == 0 ? 0 : 1;
     }

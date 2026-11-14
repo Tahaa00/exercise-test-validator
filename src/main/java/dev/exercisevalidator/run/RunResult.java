@@ -6,7 +6,7 @@ import java.util.Optional;
 /**
  * Result of one Gradle run of the suite against one variant.
  *
- * @param variant     "solution" or "alternatives/&lt;name&gt;"
+ * @param variant     source path relative to the exercise, for example "solution" or "buggy/missing-null-guard"
  * @param seed        random-order seed, or null for the declared order
  * @param build       whether Gradle got as far as producing test results
  * @param jvmKilled   the test JVM died mid-run, so tests after that point are missing from the XML
@@ -20,7 +20,7 @@ public record RunResult(String variant, Long seed, Build build, boolean jvmKille
     public enum Build {
         /** Test results exist. Tests may still have failed. */
         RAN,
-        /** No test results: compile error, dependency download failure, broken build file. */
+        /** The build failed outside ordinary test failures. Any available XML is retained as evidence. */
         FAILED,
         /** The whole Gradle run exceeded the tool's time limit and was stopped. */
         TIMED_OUT,
@@ -32,12 +32,38 @@ public record RunResult(String variant, Long seed, Build build, boolean jvmKille
         return build == Build.RAN;
     }
 
-    public Optional<TestResult> find(String testName) {
-        return tests.stream().filter(t -> t.name().equals(testName)).findFirst();
+    /** An unexplained executor death leaves the grading run incomplete, even if its surviving rows passed. */
+    public boolean unattributedJvmExit() {
+        if (!jvmKilled) {
+            return false;
+        }
+        List<TestResult> interrupted = tests.stream().filter(TestResult::interruptedByJvmExit).toList();
+        return interrupted.size() != 1 || outcomeOf(interrupted.get(0).qualifiedName()) != TestOutcome.TIMEOUT;
     }
 
-    /** Outcome of a test in this run; a test that is not in the XML counts as NOT_RUN, never as passed. */
-    public TestOutcome outcomeOf(String testName) {
-        return find(testName).map(TestResult::outcome).orElse(TestOutcome.NOT_RUN);
+    public List<TestResult> matches(String qualifiedName) {
+        return tests.stream().filter(t -> t.qualifiedName().equals(qualifiedName)).toList();
+    }
+
+    /** Raw XML evidence is attributable only when exactly one row matches the qualified identity. */
+    public Optional<TestResult> find(String qualifiedName) {
+        List<TestResult> rows = matches(qualifiedName);
+        return rows.size() == 1 ? Optional.of(rows.get(0)) : Optional.empty();
+    }
+
+    /** Only a unique, fully identified row in a grading run can supply an attributable outcome. */
+    public TestOutcome outcomeOf(String qualifiedName) {
+        return outcomeOf(matches(qualifiedName));
+    }
+
+    public TestOutcome outcomeOf(List<TestResult> rows) {
+        if (!ran() || rows.isEmpty()) {
+            return TestOutcome.NOT_RUN;
+        }
+        TestResult row = rows.get(0);
+        if (rows.size() > 1 || row.className().isBlank() || row.name().isBlank()) {
+            return TestOutcome.AMBIGUOUS;
+        }
+        return row.outcome();
     }
 }

@@ -2,8 +2,10 @@ package dev.exercisevalidator.run;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -45,6 +47,16 @@ class PitXmlReaderTest {
         assertFalse(survivor.detected());
         assertTrue(mutants.get(1).detected(), "RUN_ERROR counts as detected, as PIT says");
         assertFalse(mutants.get(1).killed());
+    }
+
+    @Test
+    void malformedReportCannotSupplyMutationEvidence(@TempDir Path temp) throws Exception {
+        Path xml = temp.resolve("mutations.xml");
+        for (String invalid : List.of("<results/>", XML.replace("<lineNumber>5", "<lineNumber>x"),
+                XML.replace("detected='false'", "detected='unknown'"), XML.replace("status='KILLED'", ""))) {
+            Files.writeString(xml, invalid);
+            assertThrows(IOException.class, () -> PitXmlReader.read(xml, temp));
+        }
     }
 
     @Test

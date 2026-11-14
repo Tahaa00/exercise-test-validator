@@ -23,6 +23,12 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+tasks.withType<JavaCompile>().configureEach {
+    // Sources contain non-ASCII text. Without this, JDK 17 compiles them in the platform encoding,
+    // which is not UTF-8 on every machine (for example a CI container with the POSIX locale).
+    options.encoding = "UTF-8"
+}
+
 application {
     mainClass = "dev.exercisevalidator.Main"
 }

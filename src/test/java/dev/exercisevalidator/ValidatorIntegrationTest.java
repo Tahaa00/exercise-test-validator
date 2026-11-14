@@ -4,9 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +21,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.exercisevalidator.check.BuggyResult;
 import dev.exercisevalidator.check.Report;
 import dev.exercisevalidator.check.Validator;
 import dev.exercisevalidator.check.Verdict;
@@ -26,20 +31,105 @@ import dev.exercisevalidator.run.GradleRunner;
 import dev.exercisevalidator.run.Mutant;
 import dev.exercisevalidator.run.MutationResult;
 import dev.exercisevalidator.run.RunResult;
+import dev.exercisevalidator.run.TestOutcome;
 import dev.exercisevalidator.run.VariantRunner;
 
 /**
- * End to end: real Gradle runs of the plain sample, a flaky fixture and an Ares 1 fixture.
+ * End to end: real Gradle runs of the Java 17 samples, the buggy variants and the flakiness and Ares 1 fixtures.
  * Run with {@code ./gradlew integrationTest}.
- * The Ares samples are not run here because they need JDK 25; they are checked by hand until CI exists (step 4).
  */
 @Tag("integration")
 class ValidatorIntegrationTest {
 
     private static final Path PLAIN_SAMPLE = Path.of("exercises/array-max-plain");
+    private static final Path ARRAY_MAX = Path.of("exercises/array-max");
 
     private static Map<String, Status> statuses(Report report) {
         return report.verdicts().stream().collect(Collectors.toMap(Verdict::test, Verdict::status));
+    }
+
+    @Test
+    void cliAccountsForSameNamedSkippedAndFilteredTests(@TempDir Path temp) throws Exception {
+        Path root = temp.resolve("test-accounting");
+        copy(Path.of("src/test/exercises/test-accounting"), root);
+        Path build = root.resolve("tests");
+        copy(PLAIN_SAMPLE.resolve("tests/gradle"), build.resolve("gradle"));
+        for (String file : List.of("gradlew", "gradlew.bat", "settings.gradle", "build.gradle")) {
+            Files.copy(PLAIN_SAMPLE.resolve("tests").resolve(file), build.resolve(file));
+        }
+        Files.writeString(build.resolve("build.gradle"), "\ntest { useJUnitPlatform { excludeTags 'deferred' } }\n",
+                StandardOpenOption.APPEND);
+
+        var console = new ByteArrayOutputStream();
+        var errors = new ByteArrayOutputStream();
+        int exit = Main.run(new String[]{"validate", root.toString(), "--runs", "0", "--no-mutation",
+                        "--expected-tests", root.resolve("expected-tests.txt").toString()},
+                new PrintStream(console, true, StandardCharsets.UTF_8), new PrintStream(errors, true, StandardCharsets.UTF_8));
+        String report = console.toString(StandardCharsets.UTF_8);
+        assertEquals(1, exit, () -> report + errors.toString(StandardCharsets.UTF_8));
+        assertTrue(report.contains("Solution: 1/4 pass"), report);
+        assertTrue(report.contains("SKIPPED"), report);
+        assertTrue(report.contains("NOT RUN"), report);
+        assertTrue(report.contains("PASSED CHECKS    clock.ConversionTest#oneHour()"), report);
+        assertTrue(report.contains("REJECTED         clock.SecondConversionTest#oneHour()"), report);
+        assertTrue(report.contains("NOT CHECKED      clock.ConversionTest#zeroHours()"), report);
+    }
+
+    @Test
+    void arrayMaxSuiteAcceptsMissingNullGuardAndCatchesInputSort() throws Exception {
+        Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(10), false, null), step -> { });
+        Report report = validator.validate(Exercise.open(ARRAY_MAX), 0, 1, false);
+
+        assertNull(report.fatal(), report.fatal());
+        assertEquals(2, report.buggyVariants().size());
+        BuggyResult missed = report.buggyVariants().get(0);
+        assertEquals("buggy/missing-null-guard", missed.run().variant());
+        assertEquals(BuggyResult.Status.MISSED, missed.status(), missed.problem());
+        assertEquals(7, missed.run().tests().size());
+        assertEquals("PASS", missed.intendedOutcome());
+        BuggyResult caught = report.buggyVariants().get(1);
+        assertEquals("buggy/sorts-input", caught.run().variant());
+        assertEquals(BuggyResult.Status.CAUGHT, caught.status(), caught.problem());
+        assertEquals(List.of("com.example.arraymax.ArrayMaxTest#arrayIsNotModified()"), caught.catchingTests());
+        assertEquals("FAIL", caught.intendedOutcome());
+        assertEquals(2, report.findings());
+        assertEquals(1, report.exitCode());
+    }
+
+    @Test
+    void independentWitnessesReproduceTheTwoDocumentedBugs(@TempDir Path temp) throws Exception {
+        // Use the exercise's own build, with only the two witness tests in this private copy.
+        copy(ARRAY_MAX.resolve("solution"), temp.resolve("solution"));
+        copy(ARRAY_MAX.resolve("buggy"), temp.resolve("buggy"));
+        Path tests = temp.resolve("tests");
+        copy(Path.of("src/test/exercises/array-max-witness/test"), tests.resolve("test"));
+        Path original = ARRAY_MAX.resolve("tests");
+        copy(original.resolve("gradle"), tests.resolve("gradle"));
+        for (String file : List.of("gradlew", "gradlew.bat", "settings.gradle", "build.gradle", "SecurityPolicy.yaml")) {
+            Files.copy(original.resolve(file), tests.resolve(file));
+        }
+        Exercise exercise = Exercise.open(temp);
+        GradleRunner runner = new GradleRunner(Duration.ofMinutes(10), false, null);
+        for (String variant : List.of("solution", "buggy/missing-null-guard", "buggy/sorts-input")) {
+            try (VariantRunner.Session session = runner.open(exercise, variant)) {
+                RunResult run = session.run();
+                assertEquals(RunResult.Build.RAN, run.build(), run.problem());
+                assertEquals(2, run.tests().size());
+                if (variant.endsWith("missing-null-guard")) {
+                    assertEquals(TestOutcome.FAIL, run.outcomeOf("com.example.arraymax.ArrayMaxWitnessTest#nullWitness()"));
+                    assertTrue(run.find("com.example.arraymax.ArrayMaxWitnessTest#nullWitness()").orElseThrow().message().contains("NullPointerException"));
+                } else {
+                    assertEquals(TestOutcome.PASS, run.outcomeOf("com.example.arraymax.ArrayMaxWitnessTest#nullWitness()"));
+                }
+                if (variant.endsWith("sorts-input")) {
+                    assertEquals(TestOutcome.FAIL, run.outcomeOf("com.example.arraymax.ArrayMaxWitnessTest#inputWitness()"));
+                    // The return-value assertion passed and the side-effect assertion showed the mutated input.
+                    assertTrue(run.find("com.example.arraymax.ArrayMaxWitnessTest#inputWitness()").orElseThrow().message().contains("expected: <[2, 1]> but was: <[1, 2]>"));
+                } else {
+                    assertEquals(TestOutcome.PASS, run.outcomeOf("com.example.arraymax.ArrayMaxWitnessTest#inputWitness()"));
+                }
+            }
+        }
     }
 
     @Test
@@ -53,7 +143,7 @@ class ValidatorIntegrationTest {
         assertEquals(3, report.alternatives().size());
         Map<String, Status> statuses = statuses(report);
         assertEquals(7, statuses.size());
-        assertEquals(Status.OVER_SPECIFIED, statuses.get("emptyArrayIsRejected()"));
+        assertEquals(Status.OVER_SPECIFIED, statuses.get("com.example.arraymax.ArrayMaxTest#emptyArrayIsRejected()"));
         assertEquals(6, report.count(Status.OK));
         Verdict finding = report.verdicts().stream().filter(v -> v.status() == Status.OVER_SPECIFIED).findFirst().orElseThrow();
         assertTrue(finding.evidence().get(0).endsWith("on alternatives/b-other-message"), finding.evidence().toString());
