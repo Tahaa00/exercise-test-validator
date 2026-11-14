@@ -19,7 +19,7 @@ No API key or LLM is needed.
 ```
 exercises/
   array-max/        Artemis Gradle build with Ares, plain JUnit 5 tests + reflection helpers (style A), Gradle 8.12 + Java 17
-  array-max-ares/   Artemis Gradle build with Ares, Ares API tests: test.json + @StrictTimeout (style B), Gradle 9.8 + Java 25
+  array-max-ares/   Artemis Gradle build with Ares, Ares API tests: test.json + @StrictTimeout (style B), Gradle 9.8.0 + Java 25
   array-max-plain/  Plain Gradle build without Ares, Java 17 (baseline for PIT)
 src/                The validator (Java 17, Gradle 9.8.0)
 DECISIONS.md        Design decisions and where they differ from the original plan
@@ -116,10 +116,10 @@ run the exercise's own `./gradlew clean test`, read the JUnit XML. The exercise'
 | Status | Meaning |
 |---|---|
 | `PASSED CHECKS` | This invocation passed on the reference and in the listed reruns and correct alternatives. A weak assertion can still pass all of them. |
-| `REJECTED` | Does not pass on the reference solution. |
+| `REJECTED` | Fails, times out or is skipped on the reference solution. |
 | `FLAKY` | Passes in the declared order, but not in every random-order run. The failing seeds are shown. |
 | `OVER-SPECIFIED?` | Fails on an alternative solution. Either the test demands more than the task, or the alternative is wrong: you decide. |
-| `NOT CHECKED` | A required run lacks an attributable result. The report identifies skipped, missing, duplicate or incomplete executions. |
+| `NOT CHECKED` | The tool has no clear result for this test in at least one run: it never ran (for example after a timeout killed the test JVM), or it was skipped or reported twice. The evidence line says which. |
 
 Timeouts are shown as `TIMEOUT`, not as `FAIL`. A build that produces no test results at all (compile error,
 failed dependency download) is reported as a build problem, not as failing tests.
@@ -151,12 +151,12 @@ each variant. Read the named failures to see which tests reacted, including any 
 
 An optional `bug.properties` next to `src/` can describe the `requirement`, `input`, `expected` and
 `actual` behavior, and name the `intendedTest`. Those descriptions come from the tutor. The validator
-reads the intended test’s outcome from the grading run. See the [missing null guard](exercises/array-max/buggy/missing-null-guard/bug.properties)
+reads the intended test's outcome from the grading run. See the [missing null guard](exercises/array-max/buggy/missing-null-guard/bug.properties)
 and [in-place sort](exercises/array-max/buggy/sorts-input/bug.properties) examples.
 
 - `MISSED` adds one finding for a known wrong variant that passed the complete suite.
-- `CAUGHT` identifies a test that passed reliably on the reference and failed on the variant.
-- `INCONCLUSIVE` records a run problem, such as a failed build, missing test or ambiguous result.
+- `CAUGHT` names a test that passed reliably on the reference and failed or timed out on the variant.
+- `INCONCLUSIVE` means the run gave no clear answer: the build failed, tests are missing, or only tests that are unreliable on the reference failed. It is listed as a problem.
 
 ### Mutation check
 
@@ -179,12 +179,13 @@ so the exercise's build files stay untouched. It only runs when every test passe
 Options: `--runs <n>` (random-order runs, default 10), `--seed <n>` (replay the same runs),
 `--no-mutation` (skip the mutation check),
 `--timeout-minutes <n>` (limit per Gradle run, default 10), `--java-home <path>` (JDK to start the exercise's Gradle with),
-`--keep-work` (keep work folders and Gradle logs).
-Exit codes are 0 for no findings in the checks run, 1 for findings or incomplete grading evidence, 2 for input, file or fatal reference errors, and 3 when an attempted PIT run fails to produce a usable report. If the reference suite is unfit for PIT, the report gives the reason for skipping it and the reference findings determine the exit code.
+`--keep-work` (keep work folders and Gradle logs), `--expected-tests <file>` and `--decisions <csv>` (see above), `--help`.
+
+Exit codes: 0 no findings, 1 findings, 2 wrong input or the solution could not be run, 3 the mutation check was started but gave no usable report (it wins over 1; the report still lists the other findings). A mutation check that is skipped because the solution run is not green does not change the exit code.
 
 ## Tests of the tool itself
 
 ```bash
 ./gradlew test             # unit tests, fast and offline
-./gradlew integrationTest  # real Gradle runs: plain sample, flaky fixture, Ares 1 fixture (needs JDK 17)
+./gradlew integrationTest  # real Gradle runs: array-max-plain, array-max with its buggy variants, and the fixtures (needs JDK 17)
 ```
