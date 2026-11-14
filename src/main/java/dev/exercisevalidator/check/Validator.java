@@ -284,8 +284,8 @@ public final class Validator {
         } else {
             detail = describe(rows.get(0));
         }
-        if (run.jvmKilled()) {
-            detail += run.unattributedJvmExit() ? " (test JVM exit could not be attributed)" : " (test JVM was killed)";
+        if (run.unattributedJvmExit()) {
+            detail += " (test JVM exit could not be attributed)";
         }
         if (!run.ran()) {
             detail = "Build " + run.build() + " (" + firstLine(run.problem()) + "). " + detail;
