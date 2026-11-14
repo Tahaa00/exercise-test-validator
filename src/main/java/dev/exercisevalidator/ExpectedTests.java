@@ -38,6 +38,9 @@ record ExpectedTests(List<Entry> entries) {
                 if (line == 1 && row.startsWith("\uFEFF")) {
                     row = row.substring(1);
                 }
+                if (row.isBlank()) {
+                    continue; // a trailing or separating blank line is not a test
+                }
                 String[] fields = row.split("\t", -1);
                 if (fields.length > 2 || !qualified(fields[0]) || (fields.length == 2 && !qualified(fields[1]))) {
                     throw new IllegalArgumentException(file + ":" + line + ": expected class#invocation"

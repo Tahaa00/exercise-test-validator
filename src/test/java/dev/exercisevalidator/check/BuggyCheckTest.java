@@ -57,11 +57,31 @@ class BuggyCheckTest {
     }
 
     @Test
-    void interruptionsAndMismatchedTestsCannotShowDetectionEvenWithAFailure() {
+    void aReliableTestThatFailsOrTimesOutIsACatchEvenInAnIncompleteRun() {
         BuggyCheck check = new BuggyCheck(List.of(run(PASS, OTHER)), List.of());
-        for (RunResult partial : List.of(killed(FAIL, OTHER), run(FAIL),
-                run(FAIL, test("p.Second", TestOutcome.SKIPPED)), run(FAIL, test("p.Second", TestOutcome.TIMEOUT)),
-                run(FAIL, OTHER, OTHER), run(FAIL, OTHER, test("p.TestExecutor", TestOutcome.FAIL)),
+        TestResult hung = new TestResult("check()", "p.First", TestOutcome.TIMEOUT, "hung", true);
+        for (RunResult partial : List.of(killed(FAIL, OTHER), run(FAIL), killed(hung), run(test("p.First", TestOutcome.TIMEOUT), OTHER),
+                run(FAIL, test("p.Second", TestOutcome.SKIPPED)), run(FAIL, test("p.Second", TestOutcome.TIMEOUT)))) {
+            BuggyResult result = check.judge(partial, BugDescription.EMPTY);
+            assertEquals(Status.CAUGHT, result.status(), partial.toString());
+            assertTrue(result.catchingTests().contains("p.First#check()"));
+        }
+    }
+
+    @Test
+    void aTestSkippedOnTheReferenceToDoesNotBlockTheVerdict() {
+        TestResult disabled = test("p.Second", TestOutcome.SKIPPED);
+        BuggyCheck check = new BuggyCheck(List.of(run(PASS, disabled)), List.of());
+        assertEquals(Status.MISSED, check.judge(run(PASS, disabled), BugDescription.EMPTY).status());
+        assertEquals(Status.CAUGHT, check.judge(run(FAIL, disabled), BugDescription.EMPTY).status());
+    }
+
+    @Test
+    void runsWithoutAReliableFailureCannotShowDetectionOrAMiss() {
+        BuggyCheck check = new BuggyCheck(List.of(run(PASS, OTHER)), List.of());
+        for (RunResult partial : List.of(killed(PASS, OTHER), run(PASS),
+                run(PASS, test("p.Second", TestOutcome.SKIPPED)),
+                run(PASS, OTHER, OTHER), run(PASS, OTHER, test("p.TestExecutor", TestOutcome.FAIL)),
                 new RunResult("bad", null, Build.FAILED, false, null, List.of(FAIL, OTHER), "build finalizer failed"),
                 new RunResult("bad", null, Build.TIMED_OUT, false, null, List.of(), "deadline"),
                 new RunResult("bad", null, Build.NO_TESTS, false, null, List.of(), "no XML"))) {

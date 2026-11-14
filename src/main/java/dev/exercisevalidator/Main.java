@@ -77,7 +77,12 @@ public final class Main {
                         runs = (int) count;
                     }
                     case "--seed" -> seed = number(args, ++i, Long.MIN_VALUE);
-                    case "--timeout-minutes" -> timeoutMinutes = number(args, ++i, 1);
+                    case "--timeout-minutes" -> {
+                        timeoutMinutes = number(args, ++i, 1);
+                        if (timeoutMinutes > 24 * 60) {
+                            throw new IllegalArgumentException("--timeout-minutes exceeds the supported range");
+                        }
+                    }
                     case "--keep-work" -> keepWork = true;
                     case "--no-mutation" -> mutation = false;
                     case "--java-home" -> {
@@ -102,7 +107,10 @@ public final class Main {
             try {
                 report = validator.validate(Exercise.open(folder), runs, seed, mutation, invocations);
             } catch (IOException | IllegalArgumentException e) {
-                report = failedReport(folder, seed, invocations, e.toString());
+                if (decisions == null && e instanceof IllegalArgumentException) {
+                    throw e; // a wrong folder is a usage error; only an export still needs a report to write
+                }
+                report = failedReport(folder, seed, invocations, e.getMessage() == null ? e.toString() : e.getMessage());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 report = failedReport(folder, seed, invocations, "Validation was interrupted.");

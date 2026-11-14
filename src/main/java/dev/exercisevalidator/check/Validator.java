@@ -33,6 +33,7 @@ import dev.exercisevalidator.run.VariantRunner;
 public final class Validator {
 
     /** {@code name()} is what JUnit writes for a plain test method, {@code name[Class]} what Ares' structural tests write. */
+    private static final int MAX_EVIDENCE_PER_KIND = 3;
     private static final Pattern USUAL_TEST_NAME = Pattern.compile("[A-Za-z_$][\\w$]*(\\(\\)|\\[[\\w$.]+])");
 
     private final VariantRunner runner;
@@ -78,13 +79,14 @@ public final class Validator {
                     } catch (IOException ex) {
                         run = failedRun("solution", seed, ex);
                     }
-                    shuffled.add(run);
-                    accountForRun(known, problems, run);
                     if (!run.ran()) {
+                        // A run without results says nothing about any single test: one problem line, no verdicts.
                         problems.add("Flakiness check stopped after " + i + " of " + shuffledRuns + " runs: seed " + seed
                                 + " had an incomplete build (" + run.build() + "). " + firstLine(run.problem()));
                         break;
                     }
+                    shuffled.add(run);
+                    accountForRun(known, problems, run);
                 }
                 if (mutation) {
                     mutationResult = mutate(session, solution, known);
@@ -102,11 +104,12 @@ public final class Validator {
         if (solution.ran()) {
             for (String variant : exercise.alternatives()) {
                 RunResult run = runVariant(exercise, variant);
+                if (!run.ran()) {
+                    problems.add(variant + " could not be run (" + run.build() + "), so it was left out. " + firstLine(run.problem()));
+                    continue;
+                }
                 alternatives.add(run);
                 accountForRun(known, problems, run);
-                if (!run.ran()) {
-                    problems.add(variant + " could not be run (" + run.build() + "). " + firstLine(run.problem()));
-                }
             }
         }
         if (!expectedTests.isEmpty()) {
@@ -206,29 +209,38 @@ public final class Validator {
     static Verdict judge(String test, RunResult solution, List<RunResult> shuffled, List<RunResult> alternatives) {
         List<String> evidence = new ArrayList<>();
         TestOutcome reference = observe(test, solution, evidence);
-        boolean incomplete = isIncomplete(reference) || solution.jvmKilled();
+        // A kill that is pinned on one hanging test only costs the tests after it (they are missing, so NOT_RUN).
+        // Only a kill nobody can explain makes the whole run unusable.
+        boolean incomplete = isIncomplete(reference) || solution.unattributedJvmExit();
         boolean shuffledFailure = false;
         int shuffledPasses = 0;
+        List<String> seedLines = new ArrayList<>();
         for (RunResult run : shuffled) {
-            TestOutcome observed = observe(test, run, evidence);
-            incomplete |= isIncomplete(observed) || run.jvmKilled();
+            TestOutcome observed = observe(test, run, seedLines);
+            incomplete |= isIncomplete(observed) || run.unattributedJvmExit();
             shuffledFailure |= isFailure(observed);
             if (observed == TestOutcome.PASS) {
                 shuffledPasses++;
             }
         }
         if (shuffledFailure || (isFailure(reference) && shuffledPasses > 0)) {
-            evidence.add("passed in " + shuffledPasses + " of " + shuffled.size() + " attempted random-order runs");
+            evidence.add("passed in " + shuffledPasses + " of " + shuffled.size() + " random-order runs");
+        }
+        // The first few seeds are enough to replay the failure; ten near-identical lines per test bury the report.
+        seedLines.stream().limit(MAX_EVIDENCE_PER_KIND).forEach(evidence::add);
+        if (seedLines.size() > MAX_EVIDENCE_PER_KIND) {
+            evidence.add("... and " + (seedLines.size() - MAX_EVIDENCE_PER_KIND) + " more runs");
         }
         boolean alternativeFailure = false;
         for (RunResult run : alternatives) {
             TestOutcome observed = observe(test, run, evidence);
-            incomplete |= isIncomplete(observed) || run.jvmKilled();
+            incomplete |= isIncomplete(observed) || run.unattributedJvmExit();
             alternativeFailure |= isFailure(observed);
         }
 
         Status status;
-        if (isFailure(reference)) {
+        if (isFailure(reference) || reference == TestOutcome.SKIPPED) {
+            // A test that is skipped on the solution earns no points for a correct submission either (D28).
             status = Status.REJECTED;
         } else if (isIncomplete(reference)) {
             status = Status.NOT_CHECKED;
@@ -258,7 +270,7 @@ public final class Validator {
     private static TestOutcome observe(String test, RunResult run, List<String> evidence) {
         List<TestResult> rows = run.matches(test);
         TestOutcome outcome = run.outcomeOf(rows);
-        if (outcome == TestOutcome.PASS && !run.jvmKilled()) {
+        if (outcome == TestOutcome.PASS && !run.unattributedJvmExit()) {
             return outcome;
         }
         String detail;

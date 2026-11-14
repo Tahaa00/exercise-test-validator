@@ -17,6 +17,7 @@ final class BuggyCheck {
     private final Set<String> expected = new LinkedHashSet<>();
     private final Set<String> ambiguous = new LinkedHashSet<>();
     private final Set<String> referencePasses = new HashSet<>();
+    private final Set<String> referenceSkips = new HashSet<>();
     private final boolean hasCompletedReference;
 
     BuggyCheck(List<RunResult> referenceRuns, List<RunResult> alternatives) {
@@ -32,6 +33,10 @@ final class BuggyCheck {
 
         hasCompletedReference = referenceRuns.stream().anyMatch(r -> r.ran() && !r.jvmKilled() && !expected.isEmpty()
                 && expected.stream().allMatch(id -> r.find(id).isPresent()));
+        if (!referenceRuns.isEmpty()) {
+            referenceRuns.get(0).tests().stream().filter(t -> t.outcome() == TestOutcome.SKIPPED)
+                    .forEach(t -> referenceSkips.add(t.qualifiedName()));
+        }
         referencePasses.addAll(expected);
         for (RunResult reference : referenceRuns) {
             Set<String> passed = new HashSet<>();
@@ -59,12 +64,18 @@ final class BuggyCheck {
         List<String> catches = new ArrayList<>();
         boolean anyFailure = false;
         for (TestResult test : run.tests()) {
-            if (test.outcome() == TestOutcome.FAIL) {
+            // A timeout is a catch too: an endless loop is a common mistake, and the suite did notice it.
+            if (test.outcome() == TestOutcome.FAIL || test.outcome() == TestOutcome.TIMEOUT) {
                 anyFailure = true;
                 if (referencePasses.contains(test.qualifiedName())) {
                     catches.add(test.qualifiedName());
                 }
             }
+        }
+        if (run.ran() && !catches.isEmpty()) {
+            // One test that is reliable on the reference and fails here settles it, even if the JVM was killed
+            // afterwards. A complete run only matters for MISSED, which claims that every test passed.
+            return new BuggyResult(run, description, Status.CAUGHT, intendedOutcome, List.copyOf(catches), null);
         }
         String problem = incompleteReason(run);
         if (problem == null && anyFailure && catches.isEmpty()) {
@@ -73,8 +84,7 @@ final class BuggyCheck {
         if (problem != null) {
             return new BuggyResult(run, description, Status.INCONCLUSIVE, intendedOutcome, List.of(), problem);
         }
-        return new BuggyResult(run, description, anyFailure ? Status.CAUGHT : Status.MISSED,
-                intendedOutcome, List.copyOf(catches), null);
+        return new BuggyResult(run, description, Status.MISSED, intendedOutcome, List.of(), null);
     }
 
     private String intendedOutcome(RunResult run, String intended) {
@@ -116,7 +126,9 @@ final class BuggyCheck {
             if (!missing.remove(id)) {
                 return "Repeated test identity: " + id;
             }
-            if (test.outcome() != TestOutcome.PASS && test.outcome() != TestOutcome.FAIL) {
+            boolean skippedLikeReference = test.outcome() == TestOutcome.SKIPPED && referenceSkips.contains(id);
+            if (test.outcome() != TestOutcome.PASS && !skippedLikeReference && test.outcome() != TestOutcome.FAIL
+                    && test.outcome() != TestOutcome.TIMEOUT) {
                 return test.qualifiedName() + " was " + test.outcome() + ".";
             }
         }

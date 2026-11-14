@@ -146,7 +146,7 @@ public final class ConsoleReport {
         Map<String, Long> counts = mutants.stream().collect(Collectors.groupingBy(Mutant::status,
                 java.util.TreeMap::new, Collectors.counting()));
         long runErrors = counts.getOrDefault("RUN_ERROR", 0L);
-        out.append("  ").append(mutants.size()).append(" mutants: ")
+        out.append("  ").append(mutants.size()).append(mutants.size() == 1 ? " mutant: " : " mutants: ")
                 .append(counts.getOrDefault("KILLED", 0L)).append(" killed, ")
                 .append(counts.getOrDefault("TIMED_OUT", 0L)).append(" timed out, ")
                 .append(runErrors).append(runErrors == 1 ? " run error, " : " run errors, ")

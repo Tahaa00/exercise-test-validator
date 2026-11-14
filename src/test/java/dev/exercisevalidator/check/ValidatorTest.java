@@ -88,7 +88,19 @@ class ValidatorTest {
                 List.of());
 
         assertEquals(Status.FLAKY, verdict.status());
-        assertEquals(List.of("seed 22: FAIL (boom)", "passed in 1 of 2 attempted random-order runs"), verdict.evidence());
+        assertEquals(List.of("passed in 1 of 2 random-order runs", "seed 22: FAIL (boom)"), verdict.evidence());
+    }
+
+    @Test
+    void onlyTheFirstFailingSeedsAreListed() {
+        List<RunResult> runs = new ArrayList<>();
+        for (long seed = 1; seed <= 5; seed++) {
+            runs.add(run("solution", seed, false, test("a()", TestOutcome.FAIL)));
+        }
+        Verdict verdict = judge(solution(test("a()", TestOutcome.PASS)), runs, List.of());
+
+        assertEquals(List.of("passed in 0 of 5 random-order runs", "seed 1: FAIL (boom)", "seed 2: FAIL (boom)",
+                "seed 3: FAIL (boom)", "... and 2 more runs"), verdict.evidence());
     }
 
     @Test
@@ -123,9 +135,10 @@ class ValidatorTest {
     @Test
     void skippedRepeatedOrUnnamedRowsCannotEstablishAnOutcome() {
         RunResult green = solution(test("a()", TestOutcome.PASS));
+        // Skipped on the solution: a correct submission gets no points for it either, so it is rejected (D28).
+        assertEquals(Status.REJECTED, judge(solution(test("a()", TestOutcome.SKIPPED)), List.of(), List.of()).status());
         for (RunResult partial : List.of(solution(test("a()", TestOutcome.SKIPPED)),
                 solution(test("a()", TestOutcome.PASS), test("a()", TestOutcome.FAIL)))) {
-            assertEquals(Status.NOT_CHECKED, judge(partial, List.of(), List.of()).status());
             assertEquals(Status.NOT_CHECKED, judge(green, List.of(partial), List.of()).status());
             assertEquals(Status.NOT_CHECKED, judge(green, List.of(), List.of(partial)).status());
         }
@@ -300,13 +313,23 @@ class ValidatorTest {
         assertTrue(report.verdicts().get(1).evidence().get(0).contains("PASS"));
         assertTrue(judge(solution(row), List.of(run("solution", 1L, true, row)), List.of()).incomplete());
         assertTrue(judge(solution(row), List.of(), List.of(run("alternatives/x", null, true, row))).incomplete());
-        TestResult interrupted = new TestResult("later()", "com.example.SomeTest", TestOutcome.TIMEOUT, "interrupted", true);
-        assertEquals(Status.NOT_CHECKED, judge(solution(row), List.of(), List.of(run("alternatives/x", null, true,
-                row, interrupted))).status());
+    }
+
+    /** D32: a kill pinned on one hanging test costs only the tests after it. What passed before it still counts. */
+    @Test
+    void attributedJvmKillKeepsEarlierPassesAndLeavesLaterTestsUnchecked() {
+        TestResult row = test("a()", TestOutcome.PASS);
+        TestResult interrupted = new TestResult("hangs()", "com.example.SomeTest", TestOutcome.TIMEOUT, "interrupted", true);
+        RunResult killed = run("alternatives/x", null, true, row, interrupted);
+        RunResult green = solution(row, test("hangs()", TestOutcome.PASS), test("later()", TestOutcome.PASS));
+
+        assertEquals(Status.OK, judge(green, List.of(), List.of(killed)).status());
+        assertEquals(Status.OVER_SPECIFIED, Validator.judge("com.example.SomeTest#hangs()", green, List.of(), List.of(killed)).status());
+        assertEquals(Status.NOT_CHECKED, Validator.judge("com.example.SomeTest#later()", green, List.of(), List.of(killed)).status());
     }
 
     @Test
-    void failedAlternativeRetainsPartialEvidenceAndInventory(@TempDir Path temp) throws Exception {
+    void failedAlternativeIsOneProblemAndIsLeftOut(@TempDir Path temp) throws Exception {
         ScriptedRunner runner = new ScriptedRunner();
         TestResult row = test("a()", TestOutcome.PASS);
         TestResult extra = test("seenOnlyInBrokenBuild()", TestOutcome.FAIL);
@@ -315,9 +338,12 @@ class ValidatorTest {
         runner.script.put("alternatives/south", List.of(new RunResult("alternatives/south", null, Build.FAILED,
                 false, "17", List.of(row, extra), "finalizer failed")));
         Report report = new Validator(runner, step -> { }).validate(new Exercise(temp), 0, 0, false);
-        assertEquals(List.of(row.qualifiedName(), extra.qualifiedName()), report.verdicts().stream().map(Verdict::test).toList());
-        assertEquals(2, report.count(Status.NOT_CHECKED));
-        assertTrue(report.verdicts().get(0).evidence().get(0).contains("finalizer failed"));
+        assertEquals(List.of(row.qualifiedName()), report.verdicts().stream().map(Verdict::test).toList());
+        assertEquals(1, report.count(Status.OK));
+        assertEquals(List.of(), report.alternatives());
+        assertEquals(1, report.problems().size());
+        assertTrue(report.problems().get(0).contains("alternatives/south") && report.problems().get(0).contains("finalizer failed"));
+        assertEquals(1, report.findings());
     }
 
     @Test
@@ -347,9 +373,10 @@ class ValidatorTest {
         Report report = new Validator(runner, step -> { }).validate(EXERCISE, 5, 1, false);
 
         assertEquals(1, report.shuffledRuns());
-        assertEquals(1, report.count(Status.NOT_CHECKED));
-        assertTrue(report.verdicts().get(0).evidence().get(0).contains("TIMED_OUT"));
+        assertEquals(1, report.count(Status.OK));
         assertEquals(1, report.problems().size());
+        assertTrue(report.problems().get(0).contains("TIMED_OUT"));
+        assertEquals(1, report.findings());
         assertEquals(1, report.exitCode());
     }
 

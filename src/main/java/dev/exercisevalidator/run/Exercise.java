@@ -34,7 +34,7 @@ public record Exercise(Path root) {
         return root.resolve(variant).resolve("src");
     }
 
-    /** Include named variants with missing sources so the runner can report the incomplete checkout. */
+    /** Alternative solutions as variant names ("alternatives/a-streams"), sorted so reports are stable. */
     public List<String> alternatives() throws IOException {
         return variantsIn("alternatives");
     }
@@ -49,8 +49,8 @@ public record Exercise(Path root) {
             return List.of();
         }
         try (Stream<Path> children = Files.list(dir)) {
-            return children.filter(Files::isDirectory)
-                    .filter(p -> !p.getFileName().toString().startsWith(".") || Files.isDirectory(p.resolve("src")))
+            // Only folders with a src/ are variants; a notes or drafts folder next to them is not a failed build.
+            return children.filter(p -> Files.isDirectory(p.resolve("src")))
                     .map(p -> folder + "/" + p.getFileName())
                     .sorted()
                     .toList();
