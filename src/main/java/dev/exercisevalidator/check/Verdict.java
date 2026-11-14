@@ -7,11 +7,7 @@ import java.util.List;
  *
  * @param evidence what was observed, one line each: which variant or seed, and the failure message
  */
-public record Verdict(String test, Status status, List<String> evidence, boolean incomplete) {
-
-    public Verdict(String test, Status status, List<String> evidence) {
-        this(test, status, evidence, status == Status.NOT_CHECKED);
-    }
+public record Verdict(String test, Status status, List<String> evidence) {
 
     public enum Status {
         /** Passes on the solution, in every random-order run and on every alternative. */

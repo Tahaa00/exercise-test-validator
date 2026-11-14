@@ -255,7 +255,7 @@ public final class Validator {
             evidence.add("Passed on the solution. Random-order runs passed: " + shuffledPasses
                     + ". Correct alternatives passed: " + alternatives.size() + ".");
         }
-        return new Verdict(test, status, List.copyOf(evidence), incomplete);
+        return new Verdict(test, status, List.copyOf(evidence));
     }
 
     private static boolean isFailure(TestOutcome outcome) {

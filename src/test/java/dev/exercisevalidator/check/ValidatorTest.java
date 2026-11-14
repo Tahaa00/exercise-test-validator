@@ -145,7 +145,7 @@ class ValidatorTest {
         for (TestResult unknown : List.of(new TestResult("a()", "", TestOutcome.PASS, ""),
                 new TestResult("", "lab.Plane", TestOutcome.PASS, ""))) {
             Verdict result = Validator.judge(unknown.qualifiedName(), solution(unknown), List.of(), List.of());
-            assertTrue(result.incomplete());
+            assertEquals(Status.NOT_CHECKED, result.status());
             assertTrue(result.evidence().get(0).contains("missing XML class or invocation name"));
         }
     }
@@ -156,7 +156,6 @@ class ValidatorTest {
                 List.of(run("solution", 10L, false, test("a()", TestOutcome.FAIL))),
                 List.of(run("alternatives/z", null, false, test("a()", TestOutcome.SKIPPED))));
         assertEquals(Status.FLAKY, result.status());
-        assertTrue(result.incomplete());
         assertTrue(result.evidence().stream().anyMatch(e -> e.contains("seed 10: FAIL")));
         assertTrue(result.evidence().stream().anyMatch(e -> e.contains("SKIPPED") && e.contains("alternatives/z")));
     }
@@ -311,8 +310,8 @@ class ValidatorTest {
         assertEquals(1, report.problems().size());
         assertEquals(1, report.count(Status.REJECTED));
         assertTrue(report.verdicts().get(1).evidence().get(0).contains("PASS"));
-        assertTrue(judge(solution(row), List.of(run("solution", 1L, true, row)), List.of()).incomplete());
-        assertTrue(judge(solution(row), List.of(), List.of(run("alternatives/x", null, true, row))).incomplete());
+        assertEquals(Status.NOT_CHECKED, judge(solution(row), List.of(run("solution", 1L, true, row)), List.of()).status());
+        assertEquals(Status.NOT_CHECKED, judge(solution(row), List.of(), List.of(run("alternatives/x", null, true, row))).status());
     }
 
     /** D32: a kill pinned on one hanging test costs only the tests after it. What passed before it still counts. */

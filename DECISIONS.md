@@ -72,6 +72,7 @@ This file overrides `project-brief-test-validator.md` wherever they differ. One 
 | D56 | Refines D35: PIT only starts when every known test (seen or listed, D49) has exactly one passing result on the solution and the test JVM was not killed. | A green XML with a listed test missing is not a green suite. |
 | D57 | The two sample bugs are confirmed by separate witness tests (`src/test/exercises/array-max-witness`), which `integrationTest` runs on the solution and on both buggy variants. | Shows that each sample variant really has the bug its `bug.properties` describes, without using the suite under test as the judge. |
 | D58 | The tool is compiled with `options.encoding = "UTF-8"`. | The sources contain non-ASCII text. JDK 17 compiles in the platform encoding, so under a POSIX locale (CI containers) a unit test failed. |
+| D59 | No machine-readable export in v1. A `--decisions` CSV (one `OK`/`REVIEW`/`INCOMPLETE` row per test) was built and removed again before merging. | It was shaped for scoring the tool against a labelled set, which the project does not do. It also duplicated the five statuses, and with default options one rejected test made every row `INCOMPLETE`. A JSON or Markdown report can come later. |
 | D12 | Real course material is never committed. `local-exercises/` is git-ignored for local runs. | Brief constraint; course content is not ours to publish. |
 
 ## Findings from step 1 (verified by running)

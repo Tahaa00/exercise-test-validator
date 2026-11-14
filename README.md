@@ -126,22 +126,22 @@ failed dependency download) is reported as a build problem, not as failing tests
 
 ### Checking which tests ran
 
-The report identifies each invocation by its JUnit XML class and name. Two classes can both have a `oneHour()` test and receive different results. By default the validator can list only the tests it observed. To detect a test excluded from every run, supply the tests you intended to grade.
+The report names each test as `class#name` from the JUnit XML, so two classes that both have a `oneHour()` test
+are reported separately. The tool only knows the tests that actually ran. To catch a test that never ran
+(disabled, or filtered out by a tag), give it the list of tests you grade:
 
 ```bash
 build/install/exercise-test-validator/bin/exercise-test-validator validate path/to/exercise \
-  --expected-tests expected-tests.txt --decisions baseline.csv
+  --expected-tests expected-tests.txt
 ```
 
-Use one UTF-8 line per expected invocation, for example `clock.ConversionTest#oneHour()`. Use the exact name the exercise's JUnit XML reports. When several invocations grade one criterion, append a literal tab and the same class-qualified grading ID to each member line. Every member has to pass the requested checks to earn a baseline `OK`. Without a list, the export has one row per observed invocation.
+Write one line per test, exactly as the JUnit XML names it, for example `clock.ConversionTest#oneHour()`.
+The file must be UTF-8. A listed test that never ran is `NOT CHECKED`; a test that ran but is not on the list
+is reported as a problem.
 
-The CSV contains `exercise,test,decision`. Use a fresh output path outside the exercise's source and test folders. Keep the text report alongside it for the evidence. The exercise ID is the exercise folder's name.
-
-- `OK` records a baseline pass on the checks you ran. Its reliability as a reason to skip manual review has yet to be measured.
-- `REVIEW` flags a failure on the reference, a shuffled run or a correct alternative. The text report names the failing test and where it failed.
-- `INCOMPLETE` means evidence is missing or ambiguous. It takes precedence over other decisions in a group. A failed required build, an unexpected invocation outside the list, or a requested PIT check that could not run makes the whole export incomplete. The text report retains individual observations.
-
-A test can pass while a requirement goes untested. In the sample above, `nullArrayIsRejected()` passed every correct implementation **and** accepted the wrong exception on `buggy/missing-null-guard`. The buggy-variant section shows that gap.
+A test can pass every check while a requirement goes untested. In the sample above, `nullArrayIsRejected()`
+passed on every correct implementation **and** accepted the wrong exception on `buggy/missing-null-guard`.
+The buggy-variant section shows that gap.
 
 ### Tutor-written buggy variants
 
@@ -179,7 +179,7 @@ so the exercise's build files stay untouched. It only runs when every test passe
 Options: `--runs <n>` (random-order runs, default 10), `--seed <n>` (replay the same runs),
 `--no-mutation` (skip the mutation check),
 `--timeout-minutes <n>` (limit per Gradle run, default 10), `--java-home <path>` (JDK to start the exercise's Gradle with),
-`--keep-work` (keep work folders and Gradle logs), `--expected-tests <file>` and `--decisions <csv>` (see above), `--help`.
+`--keep-work` (keep work folders and Gradle logs), `--expected-tests <file>` (see above), `--help`.
 
 Exit codes: 0 no findings, 1 findings, 2 wrong input or the solution could not be run, 3 the mutation check was started but gave no usable report (it wins over 1; the report still lists the other findings). A mutation check that is skipped because the solution run is not green does not change the exit code.
 

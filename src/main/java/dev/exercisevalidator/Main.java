@@ -10,7 +10,6 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import dev.exercisevalidator.check.Report;
 import dev.exercisevalidator.check.Validator;
-import dev.exercisevalidator.check.Verdict;
 import dev.exercisevalidator.report.ConsoleReport;
 import dev.exercisevalidator.run.Exercise;
 import dev.exercisevalidator.run.GradleRunner;
@@ -30,10 +29,8 @@ public final class Main {
               --timeout-minutes <n>  limit for one Gradle run (default 10)
               --java-home <path>     JDK to start the exercise's Gradle with (default: JAVA_HOME of this process)
               --keep-work            keep the temporary work folders and Gradle logs
-              --expected-tests <file>  UTF-8 inventory: one exact class#XML-invocation per line;
-                                       optionally append TAB and a class#gradingTest to group invocations
-              --decisions <csv>      export legacy decisions to a new file outside exercise inputs;
-                                     columns: exercise,test,decision (exercise is the folder name)
+              --expected-tests <file>  the tests you grade, one class#name per line (UTF-8, names as in the JUnit XML);
+                                     a listed test that never ran is then reported
               --help                 show this help
             """;
 
@@ -57,7 +54,6 @@ public final class Main {
         boolean mutation = true;
         Path javaHome = null;
         Path expectedFile = null;
-        Path decisions = null;
         try {
             if (args.length < 2 || !"validate".equals(args[0])) {
                 throw new IllegalArgumentException("Expected: validate <exercise-folder>");
@@ -92,50 +88,29 @@ public final class Main {
                         javaHome = Path.of(args[i]).toAbsolutePath();
                     }
                     case "--expected-tests" -> expectedFile = fileOption(args, ++i, expectedFile);
-                    case "--decisions" -> decisions = fileOption(args, ++i, decisions);
                     default -> throw new IllegalArgumentException("Unknown option: " + args[i]);
                 }
             }
-            ExpectedTests inventory = expectedFile == null ? new ExpectedTests(List.of()) : ExpectedTests.read(expectedFile);
-            if (decisions != null) {
-                decisions = DecisionExport.destination(decisions, folder);
-            }
+            List<String> expected = expectedFile == null ? List.of() : ExpectedTests.read(expectedFile);
+            Exercise exercise = Exercise.open(folder);
             Validator validator = new Validator(new GradleRunner(Duration.ofMinutes(timeoutMinutes), keepWork, javaHome),
                     step -> err.println("  running " + step)); // progress on stderr keeps stdout a clean report
-            Report report;
-            List<String> invocations = inventory.invocations();
-            try {
-                report = validator.validate(Exercise.open(folder), runs, seed, mutation, invocations);
-            } catch (IOException | IllegalArgumentException e) {
-                if (decisions == null && e instanceof IllegalArgumentException) {
-                    throw e; // a wrong folder is a usage error; only an export still needs a report to write
-                }
-                report = failedReport(folder, seed, invocations, e.getMessage() == null ? e.toString() : e.getMessage());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                report = failedReport(folder, seed, invocations, "Validation was interrupted.");
-            }
+            Report report = validator.validate(exercise, runs, seed, mutation, expected);
             out.print(ConsoleReport.render(report));
-            if (decisions != null) {
-                out.print(DecisionExport.write(decisions, report, inventory, mutation));
-            }
             return report.exitCode();
         } catch (IllegalArgumentException e) {
             err.println(e.getMessage());
             err.println();
             err.print(USAGE);
             return 2;
-        } catch (IOException | UnsupportedOperationException e) {
+        } catch (IOException e) {
             err.println("File error: " + e);
             return 2;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            err.println("Validation was interrupted.");
+            return 2;
         }
-    }
-
-    private static Report failedReport(Path folder, long seed, List<String> invocations, String reason) {
-        String name = folder.getFileName() == null ? folder.toString() : folder.getFileName().toString();
-        List<Verdict> verdicts = invocations.stream()
-                .map(id -> new Verdict(id, Verdict.Status.NOT_CHECKED, List.of("Validation could not finish."))).toList();
-        return new Report(name, null, List.of(), 0, seed, verdicts, List.of(), List.of(), null, reason);
     }
 
     private static Path fileOption(String[] args, int index, Path previous) {
